@@ -87,6 +87,11 @@ void FrameParser::parseAvailable(QVector<protocol::Frame> &frames) {
         const quint16 expectedCrc = readLittleEndian(buffer_, frameSize - 2);
         if (crc16CcittFalse(body) != expectedCrc) {
             ++stats_.crcErrors;
+            buffer_.remove(0, 1);
+            continue;
+        }
+
+        if (static_cast<quint8>(buffer_.at(2)) != 1) {
             buffer_.remove(0, frameSize);
             continue;
         }

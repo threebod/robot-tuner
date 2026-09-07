@@ -5,6 +5,7 @@
 #include <iostream>
 #include <utility>
 
+#include "protocol/Crc16.h"
 #include "protocol/FrameCodec.h"
 #include "protocol/FrameParser.h"
 
@@ -37,6 +38,7 @@ bool sameFrame(const protocol::Frame &actual, const protocol::Frame &expected) {
 }  // namespace
 
 int main() {
+    bool regressionFailed = false;
     const protocol::Frame first = makeFrame(1, 0x01, QByteArray("A"));
     const protocol::Frame second = makeFrame(2, 0x02, QByteArray("BC"));
     const QByteArray firstBytes = encodeFrame(first);
@@ -59,6 +61,16 @@ int main() {
                      sameFrame(stickyResult.at(1), second),
                  "concatenated frames were not both emitted")) {
         return 1;
+    }
+
+    FrameParser versionParser;
+    const QByteArray unsupportedVersion = QByteArray::fromHex(
+        "AA 55 02 01 07 01 01 00 42 5B 9A");
+    const QVector<protocol::Frame> versionResult = versionParser.push(
+        QByteArrayView(unsupportedVersion + secondBytes));
+    if (!require(versionResult.size() == 1 && sameFrame(versionResult.front(), second),
+                 "a CRC-valid unsupported version frame was accepted")) {
+        regressionFailed = true;
     }
 
     FrameParser noiseParser;
@@ -88,6 +100,28 @@ int main() {
         return 1;
     }
 
+    FrameParser pseudoSyncParser;
+    QByteArray pseudoSync = QByteArray::fromHex(
+        "AA 55 01 01 09 03 80 00");
+    QByteArray pseudoPayload(128, '\0');
+    pseudoPayload.replace(0, secondBytes.size(), secondBytes);
+    pseudoSync.append(pseudoPayload);
+    const quint16 pseudoCrc = crc16CcittFalse(
+        QByteArrayView(pseudoSync.constData() + 2, pseudoSync.size() - 2));
+    pseudoSync.append(static_cast<char>((pseudoCrc ^ 0x0001) & 0xFF));
+    pseudoSync.append(static_cast<char>(((pseudoCrc ^ 0x0001) >> 8) & 0xFF));
+    const QVector<protocol::Frame> pseudoSyncResult = pseudoSyncParser.push(
+        QByteArrayView(pseudoSync));
+    if (!require(pseudoSyncResult.size() == 1 &&
+                     sameFrame(pseudoSyncResult.front(), second),
+                 "a valid frame after a CRC pseudo-sync was swallowed")) {
+        regressionFailed = true;
+    }
+    if (!require(pseudoSyncParser.stats().crcErrors == 1,
+                 "CRC pseudo-sync error was not counted exactly once")) {
+        regressionFailed = true;
+    }
+
     FrameParser lengthParser;
     const QByteArray oversizedHeader = QByteArray::fromHex(
         "AA 55 01 01 10 20 81 00");
@@ -115,5 +149,5 @@ int main() {
         return 1;
     }
 
-    return 0;
+    return regressionFailed ? 1 : 0;
 }
