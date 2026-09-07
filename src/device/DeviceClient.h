@@ -37,6 +37,7 @@ private slots:
     void handleResponse(protocol::Frame frame);
     void handleEvent(protocol::Frame frame);
     void handleRequestFailure(quint8 sequence, QString reason);
+    void handleConnectionCleared();
 
 private:
     bool send(protocol::Command command, const QByteArray &payload);

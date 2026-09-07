@@ -83,6 +83,8 @@ void ProtocolClient::clearPending() {
     parser_.reset();
     deadlineTimer_.stop();
 
+    emit connectionCleared();
+
     for (const quint8 sequence : sequences) {
         emit requestFailed(sequence, QString::fromUtf8("连接已断开"));
     }

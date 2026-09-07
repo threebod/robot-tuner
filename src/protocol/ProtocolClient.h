@@ -27,6 +27,7 @@ signals:
     void responseReceived(protocol::Frame frame);
     void eventReceived(protocol::Frame frame);
     void requestFailed(quint8 sequence, QString reason);
+    void connectionCleared();
 
 private slots:
     void checkDeadlines();

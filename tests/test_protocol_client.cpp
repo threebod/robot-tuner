@@ -190,6 +190,7 @@ int main(int argc, char **argv) {
     ProtocolClient eventClient(10);
     int eventCount = 0;
     int disconnectFailureCount = 0;
+    int connectionClearedCount = 0;
     QString disconnectReason;
     QObject::connect(&eventClient, &ProtocolClient::eventReceived,
                      [&](const protocol::Frame &) { ++eventCount; });
@@ -198,6 +199,8 @@ int main(int argc, char **argv) {
                          ++disconnectFailureCount;
                          disconnectReason = reason;
                      });
+    QObject::connect(&eventClient, &ProtocolClient::connectionCleared,
+                     [&]() { ++connectionClearedCount; });
 
     const quint8 pendingSequence = eventClient.sendRequest(
         protocol::Command::GetStatus, {});
@@ -216,6 +219,15 @@ int main(int argc, char **argv) {
     if (!require(disconnectFailureCount == 1 &&
                      disconnectReason == QString::fromUtf8("连接已断开"),
                  "clearing pending requests did not report the disconnect")) {
+        return 1;
+    }
+    if (!require(connectionClearedCount == 1,
+                 "clearing pending requests did not emit connectionCleared")) {
+        return 1;
+    }
+    eventClient.clearPending();
+    if (!require(connectionClearedCount == 2,
+                 "clearing an empty pending table did not emit connectionCleared")) {
         return 1;
     }
 

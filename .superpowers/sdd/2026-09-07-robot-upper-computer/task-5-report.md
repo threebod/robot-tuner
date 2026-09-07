@@ -77,3 +77,24 @@ SET_PARAM_GROUP was allowed before HELLO
 ctest --test-dir build-task5-green -C Debug --output-on-failure
 100% tests passed, 0 tests failed out of 6
 ```
+
+## 修复第 2 轮：连接清理与 HELLO 序号
+
+### RED
+
+新增 `connectionCleared` 计数、无 pending 的握手清理和连续 HELLO 旧响应回归测试后，
+在修复前构建按预期失败：
+
+```text
+tests/test_protocol_client.cpp: error: 'connectionCleared' is not a member of 'ProtocolClient'
+```
+
+### GREEN
+
+- `ProtocolClient::connectionCleared()` 是兼容新增信号，`clearPending()` 每次调用均发出，
+  包括 pending 为空的情况。
+- `DeviceClient` 监听连接清理并清除握手状态及 HELLO pending 状态。
+- `DeviceClient` 记录最近一次 HELLO request sequence，只接受 pending 且序号匹配的 HELLO
+  response；旧序号响应被忽略，HELLO 错误/超时/断开清理 pending。
+
+定向测试 2/2 通过；最终全量 CTest 6/6 通过。

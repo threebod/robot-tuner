@@ -335,5 +335,52 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    ProtocolClient resetProtocol;
+    DeviceClient resetDevice(&resetProtocol);
+    QByteArray resetRequest;
+    QObject::connect(&resetProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { resetRequest = bytes; });
+    resetDevice.hello();
+    feedResponse(&resetProtocol, resetRequest, protocol::Command::Hello,
+                 helloPayload);
+    if (!require(resetDevice.handshakeComplete(),
+                 "reset-device HELLO did not complete")) {
+        return 1;
+    }
+    resetProtocol.clearPending();
+    if (!require(!resetDevice.handshakeComplete(),
+                 "clearPending without requests did not clear handshake state")) {
+        return 1;
+    }
+
+    ProtocolClient staleProtocol;
+    DeviceClient staleDevice(&staleProtocol);
+    QByteArray firstHelloRequest;
+    QByteArray secondHelloRequest;
+    int helloRequestCount = 0;
+    QObject::connect(&staleProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         ++helloRequestCount;
+                         if (helloRequestCount == 1) {
+                             firstHelloRequest = bytes;
+                         } else if (helloRequestCount == 2) {
+                             secondHelloRequest = bytes;
+                         }
+                     });
+    staleDevice.hello();
+    staleDevice.hello();
+    feedResponse(&staleProtocol, firstHelloRequest, protocol::Command::Hello,
+                 helloPayload);
+    if (!require(!staleDevice.handshakeComplete(),
+                 "an old HELLO response unlocked a newer handshake")) {
+        return 1;
+    }
+    feedResponse(&staleProtocol, secondHelloRequest, protocol::Command::Hello,
+                 helloPayload);
+    if (!require(staleDevice.handshakeComplete(),
+                 "the latest HELLO response was not accepted")) {
+        return 1;
+    }
+
     return 0;
 }

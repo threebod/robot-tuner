@@ -187,6 +187,8 @@ DeviceClient::DeviceClient(ProtocolClient *protocol, QObject *parent)
             &DeviceClient::handleEvent);
     connect(protocol_, &ProtocolClient::requestFailed, this,
             &DeviceClient::handleRequestFailure);
+    connect(protocol_, &ProtocolClient::connectionCleared, this,
+            &DeviceClient::handleConnectionCleared);
 }
 
 DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
@@ -318,6 +320,9 @@ void DeviceClient::reportError(quint8 code, const QString &detail) {
 
 void DeviceClient::handleResponse(protocol::Frame frame) {
     if (frame.command == static_cast<quint8>(protocol::Command::Hello)) {
+        if (!helloPending_ || frame.sequence != helloSequence_) {
+            return;
+        }
         helloPending_ = false;
         handshakeComplete_ = false;
     }
@@ -365,6 +370,11 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
     }
     emit deviceError(reason);
     emit terminalLog(reason);
+}
+
+void DeviceClient::handleConnectionCleared() {
+    handshakeComplete_ = false;
+    helloPending_ = false;
 }
 
 void DeviceClient::decodeHello(const QByteArray &payload) {
