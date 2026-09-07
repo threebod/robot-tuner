@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(robot_tuner LANGUAGES CXX)
+
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets SerialPort)
+
+add_executable(robot_tuner
+    src/main.cpp
+    src/app/MainWindow.cpp
+    src/app/MainWindow.h
+)
+target_include_directories(robot_tuner PRIVATE src)
+target_link_libraries(robot_tuner PRIVATE Qt6::Widgets Qt6::SerialPort)
+
+add_executable(test_ui_smoke
+    tests/test_ui_smoke.cpp
+    src/app/MainWindow.cpp
+    src/app/MainWindow.h
+)
+target_include_directories(test_ui_smoke PRIVATE src)
+target_link_libraries(test_ui_smoke PRIVATE Qt6::Widgets Qt6::SerialPort)
+
+enable_testing()
+add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
+set_tests_properties(test_ui_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
