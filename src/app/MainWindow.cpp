@@ -23,6 +23,9 @@ static const QStringList kPages = {
     "串口终端", "视觉（预留）"
 };
 
+constexpr quint8 kDefaultTelemetryMask = 0x07;
+constexpr quint16 kDefaultTelemetryPeriodMs = 100;
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -118,6 +121,12 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleSerialClosed);
     connect(&serial_, &SerialController::serialError, this,
             &MainWindow::handleSerialError);
+    connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
+            [this](qint64 latencyMs) {
+                if (overviewPage_ != nullptr) {
+                    overviewPage_->setLatency(latencyMs);
+                }
+            });
     connect(baudCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) {
                 if (imuPage_ != nullptr) {
@@ -131,11 +140,10 @@ MainWindow::MainWindow(QWidget *parent)
                 if (overviewPage_ != nullptr) {
                     overviewPage_->setDeviceInfo(info);
                     overviewPage_->setLinkState(QStringLiteral("设备已握手"));
-                    overviewPage_->setLatency(connectionTimer_.isValid()
-                                                   ? connectionTimer_.elapsed()
-                                                   : -1);
                 }
                 device_.getStatus();
+                device_.setTelemetry(kDefaultTelemetryMask,
+                                     kDefaultTelemetryPeriodMs);
             });
     connect(&device_, &DeviceClient::deviceError, this,
             &MainWindow::handleDeviceError);
@@ -226,7 +234,6 @@ void MainWindow::handleSerialOpened() {
         overviewPage_->setLinkState(QStringLiteral("串口已连接，等待设备握手"));
         overviewPage_->setLatency(-1);
     }
-    connectionTimer_.start();
     setDeviceControlsEnabled(false);
     device_.hello();
 }
@@ -259,7 +266,13 @@ void MainWindow::handleDeviceError(QString message) {
         imuPage_->setDeviceError(message);
     }
     if (!device_.handshakeComplete()) {
-        connectionStatusLabel_->setText(std::move(message));
+        setDeviceControlsEnabled(false);
+        const QString unavailable =
+            QStringLiteral("未连接/不可用：%1").arg(message);
+        connectionStatusLabel_->setText(unavailable);
+        if (overviewPage_ != nullptr) {
+            overviewPage_->setLinkState(QStringLiteral("未连接/不可用"));
+        }
     }
 }
 

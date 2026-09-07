@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QMainWindow>
-#include <QElapsedTimer>
 
 #include "device/DeviceClient.h"
 #include "protocol/ProtocolClient.h"
@@ -52,5 +51,4 @@ private:
     ChassisPage *chassisPage_{};
     ImuPage *imuPage_{};
     MechanismPage *mechanismPage_{};
-    QElapsedTimer connectionTimer_;
 };

@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QDeadlineTimer>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QString>
@@ -27,6 +28,7 @@ signals:
     void responseReceived(protocol::Frame frame);
     void eventReceived(protocol::Frame frame);
     void requestFailed(quint8 sequence, QString reason);
+    void requestLatencyChanged(qint64 latencyMs);
     void connectionCleared();
 
 private slots:
@@ -37,6 +39,7 @@ private:
         protocol::Frame frame;
         int retriesRemaining{1};
         QDeadlineTimer deadline;
+        QElapsedTimer elapsed;
     };
 
     quint8 allocateSequence();

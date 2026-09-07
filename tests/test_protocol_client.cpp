@@ -29,6 +29,8 @@ int main(int argc, char **argv) {
     int bytesReadyCount = 0;
     int responseCount = 0;
     int failureCount = 0;
+    int latencyCount = 0;
+    qint64 latestLatencyMs = -1;
     QByteArray requestBytes;
 
     QObject::connect(&client, &ProtocolClient::bytesReady,
@@ -40,6 +42,11 @@ int main(int argc, char **argv) {
                      [&](const protocol::Frame &) { ++responseCount; });
     QObject::connect(&client, &ProtocolClient::requestFailed,
                      [&](quint8, const QString &) { ++failureCount; });
+    QObject::connect(&client, &ProtocolClient::requestLatencyChanged,
+                     [&](qint64 latencyMs) {
+                         ++latencyCount;
+                         latestLatencyMs = latencyMs;
+                     });
 
     const quint8 sequence = client.sendRequest(
         protocol::Command::GetStatus, QByteArray("request"));
@@ -65,6 +72,10 @@ int main(int argc, char **argv) {
 
     if (!require(responseCount == 1,
                  "a matching response was not emitted exactly once")) {
+        return 1;
+    }
+    if (!require(latencyCount == 1 && latestLatencyMs >= 0,
+                 "a matching response did not report request latency")) {
         return 1;
     }
     if (!require(bytesReadyCount == 1 && failureCount == 0,
@@ -125,6 +136,8 @@ int main(int argc, char **argv) {
     ProtocolClient retryClient(10);
     int retryBytesReadyCount = 0;
     int retryFailureCount = 0;
+    int retryLatencyCount = 0;
+    qint64 retryLatencyMs = -1;
     QByteArray firstRetryBytes;
     QByteArray secondRetryBytes;
     QObject::connect(&retryClient, &ProtocolClient::bytesReady,
@@ -138,6 +151,11 @@ int main(int argc, char **argv) {
                      });
     QObject::connect(&retryClient, &ProtocolClient::requestFailed,
                      [&](quint8, const QString &) { ++retryFailureCount; });
+    QObject::connect(&retryClient, &ProtocolClient::requestLatencyChanged,
+                     [&](qint64 latencyMs) {
+                         ++retryLatencyCount;
+                         retryLatencyMs = latencyMs;
+                     });
 
     retryClient.sendRequest(protocol::Command::GetStatus, {});
     QEventLoop retryLoop;
@@ -154,6 +172,10 @@ int main(int argc, char **argv) {
     }
     if (!require(retryFailureCount == 1,
                  "a request did not fail after its retry was exhausted")) {
+        return 1;
+    }
+    if (!require(retryLatencyCount == 1 && retryLatencyMs >= 0,
+                 "a timed-out request did not report request latency")) {
         return 1;
     }
 

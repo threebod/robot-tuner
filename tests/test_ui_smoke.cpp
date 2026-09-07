@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QAbstractSpinBox>
+#include <QByteArrayView>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -12,10 +13,13 @@
 #include <utility>
 
 #include "app/MainWindow.h"
+#include "device/DeviceClient.h"
 #include "pages/ChassisPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/OverviewPage.h"
+#include "protocol/FrameCodec.h"
+#include "protocol/FrameParser.h"
 #include "widgets/TelemetryPlot.h"
 
 namespace {
@@ -25,6 +29,13 @@ bool require(bool condition, const char *message) {
         std::cerr << message << '\n';
     }
     return condition;
+}
+
+protocol::Frame capturedFrame(const QByteArray &bytes) {
+    FrameParser parser;
+    const QVector<protocol::Frame> frames =
+        parser.push(QByteArrayView(bytes));
+    return frames.isEmpty() ? protocol::Frame{} : frames.front();
 }
 
 }  // namespace
@@ -55,8 +66,11 @@ int main(int argc, char **argv) {
     auto *overviewPage = window.findChild<QWidget *>("总览");
     auto *overviewLink =
         window.findChild<QLabel *>("overviewLinkStateLabel");
+    auto *overviewLatency = window.findChild<QLabel *>("latencyLabel");
     auto *imuTelemetryRate =
         window.findChild<QSpinBox *>("imuTelemetryRateSpinBox");
+    auto *protocol = window.findChild<ProtocolClient *>();
+    auto *device = window.findChild<DeviceClient *>();
     if (!require(nav && nav->count() == 7, "navigation pages changed") ||
         !require(portCombo && baudCombo && refreshPortsButton && connectButton,
                  "connection controls are missing") ||
@@ -68,7 +82,7 @@ int main(int argc, char **argv) {
         !require(actionPage && !actionPage->isEnabled(),
                  "action page must stay disabled before handshake") ||
         !require(imuPage && !imuPage->isEnabled() && overviewPage &&
-                     overviewLink &&
+                     overviewLink && overviewLatency &&
                      overviewLink->text() == QStringLiteral("未连接"),
                  "overview or IMU telemetry page is not wired") ||
         !require(imuTelemetryRate && imuTelemetryRate->minimum() == 1 &&
@@ -90,7 +104,56 @@ int main(int argc, char **argv) {
         !require(ramOnlyNotice &&
                      ramOnlyNotice->text().contains(QStringLiteral("RAM")) &&
                      ramOnlyNotice->text().contains(QStringLiteral("Flash")),
-                 "RAM-only notice is missing")) {
+                 "RAM-only notice is missing") ||
+        !require(protocol && device, "window protocol service is missing")) {
+        return 1;
+    }
+
+    QByteArray helloRequestBytes;
+    QVector<QByteArray> telemetryRequests;
+    QObject::connect(protocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         const protocol::Frame frame = capturedFrame(bytes);
+                         if (frame.command == static_cast<quint8>(
+                                 protocol::Command::Hello)) {
+                             helloRequestBytes = bytes;
+                         } else if (frame.command == static_cast<quint8>(
+                                        protocol::Command::SetTelemetry)) {
+                             telemetryRequests.push_back(bytes);
+                         }
+                     });
+    device->hello();
+    const protocol::Frame helloRequest = capturedFrame(helloRequestBytes);
+    protocol::Frame helloResponse = helloRequest;
+    helloResponse.flags = protocol::Response;
+    helloResponse.payload = QByteArray::fromHex("01 02 03 04 44 33 22 11");
+    protocol->ingestBytes(QByteArrayView(encodeFrame(helloResponse)));
+    if (!require(!telemetryRequests.isEmpty(),
+                 "successful HELLO did not subscribe telemetry automatically")) {
+        return 1;
+    }
+    const protocol::Frame defaultTelemetry =
+        capturedFrame(telemetryRequests.back());
+    if (!require(defaultTelemetry.payload == QByteArray::fromHex("07 64 00"),
+                 "default telemetry subscription must cover IMU/PID/status at 10 Hz")) {
+        return 1;
+    }
+
+    protocol::Frame telemetryResponse = defaultTelemetry;
+    telemetryResponse.flags = protocol::Response;
+    telemetryResponse.payload = QByteArray::fromHex("07 64 00");
+    protocol->ingestBytes(QByteArrayView(encodeFrame(telemetryResponse)));
+    if (!require(overviewLatency->text().contains(QStringLiteral("ms")),
+                 "overview did not display the latest response latency")) {
+        return 1;
+    }
+
+    protocol->clearPending();
+    if (!require(!device->handshakeComplete() && !imuPage->isEnabled() &&
+                     !tuningPage->isEnabled() &&
+                     connectionStatusLabel->text().contains(
+                         QStringLiteral("不可用")),
+                 "a post-handshake request failure did not lock controls")) {
         return 1;
     }
 

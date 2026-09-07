@@ -379,6 +379,9 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
     if (helloPending_ && sequence == helloSequence_) {
         helloPending_ = false;
         handshakeComplete_ = false;
+    } else if (handshakeComplete_) {
+        handshakeComplete_ = false;
+        helloPending_ = false;
     }
     if (reason == QStringLiteral("连接已断开")) {
         handshakeComplete_ = false;

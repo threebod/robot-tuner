@@ -22,6 +22,7 @@ quint8 ProtocolClient::sendRequest(protocol::Command command,
     const quint8 sequence = allocateSequence();
     if (pending_.size() == 256 || pending_.contains(sequence)) {
         emit requestFailed(sequence, QStringLiteral("请求序号已用尽"));
+        emit requestLatencyChanged(0);
         return sequence;
     }
 
@@ -33,11 +34,16 @@ quint8 ProtocolClient::sendRequest(protocol::Command command,
     const QByteArray encoded = encodeFrame(frame);
     if (encoded.isEmpty()) {
         emit requestFailed(sequence, QStringLiteral("请求编码失败"));
+        emit requestLatencyChanged(0);
         return sequence;
     }
 
-    pending_.insert(sequence,
-                    PendingRequest{frame, 1, QDeadlineTimer(timeoutMs_)});
+    PendingRequest pending;
+    pending.frame = frame;
+    pending.retriesRemaining = 1;
+    pending.deadline = QDeadlineTimer(timeoutMs_);
+    pending.elapsed.start();
+    pending_.insert(sequence, std::move(pending));
     startDeadlineTimer();
     emit bytesReady(encoded);
     return sequence;
@@ -63,20 +69,30 @@ void ProtocolClient::ingestBytes(QByteArrayView bytes) {
             continue;
         }
 
+        const qint64 latencyMs = pending->elapsed.isValid()
+                                     ? pending->elapsed.elapsed()
+                                     : 0;
         pending_.erase(pending);
         if (pending_.isEmpty()) {
             deadlineTimer_.stop();
         }
         emit responseReceived(frame);
+        emit requestLatencyChanged(latencyMs);
     }
 }
 
 void ProtocolClient::clearPending() {
-    QVector<quint8> sequences;
-    sequences.reserve(pending_.size());
+    struct Failure {
+        quint8 sequence;
+        qint64 latencyMs;
+    };
+    QVector<Failure> failures;
+    failures.reserve(pending_.size());
     for (auto pending = pending_.cbegin(); pending != pending_.cend();
          ++pending) {
-        sequences.push_back(pending.key());
+        failures.push_back({pending.key(), pending->elapsed.isValid()
+                                             ? pending->elapsed.elapsed()
+                                             : 0});
     }
 
     pending_.clear();
@@ -85,8 +101,9 @@ void ProtocolClient::clearPending() {
 
     emit connectionCleared();
 
-    for (const quint8 sequence : sequences) {
-        emit requestFailed(sequence, QString::fromUtf8("连接已断开"));
+    for (const Failure &failure : failures) {
+        emit requestFailed(failure.sequence, QString::fromUtf8("连接已断开"));
+        emit requestLatencyChanged(failure.latencyMs);
     }
 }
 
@@ -96,7 +113,11 @@ void ProtocolClient::checkDeadlines() {
         QByteArray bytes;
     };
     QVector<Retry> retries;
-    QVector<quint8> failures;
+    struct Failure {
+        quint8 sequence;
+        qint64 latencyMs;
+    };
+    QVector<Failure> failures;
     for (auto pending = pending_.begin(); pending != pending_.end();) {
         if (!pending->deadline.hasExpired()) {
             ++pending;
@@ -111,7 +132,9 @@ void ProtocolClient::checkDeadlines() {
             continue;
         }
 
-        failures.push_back(pending.key());
+        failures.push_back({pending.key(), pending->elapsed.isValid()
+                                             ? pending->elapsed.elapsed()
+                                             : 0});
         pending = pending_.erase(pending);
     }
 
@@ -120,8 +143,9 @@ void ProtocolClient::checkDeadlines() {
             emit bytesReady(retry.bytes);
         }
     }
-    for (const quint8 sequence : failures) {
-        emit requestFailed(sequence, QStringLiteral("请求超时"));
+    for (const Failure &failure : failures) {
+        emit requestFailed(failure.sequence, QStringLiteral("请求超时"));
+        emit requestLatencyChanged(failure.latencyMs);
     }
 
     if (pending_.isEmpty()) {

@@ -30,6 +30,23 @@ CMake Error at CMakeLists.txt:151 (add_executable):
 - UI smoke 覆盖导航、页面锁定、单位、异常文本、9600 频率上限、设备实际频率显示、实时值入图、校准状态和总览状态字段。
 - DeviceClient 测试覆盖状态响应/事件、实际周期及校准响应解码。
 
+## 审查修复第 1 轮
+
+### RED
+
+- `test_protocol_client` 先监听尚不存在的 `requestLatencyChanged`，旧实现编译失败。
+- UI smoke 先在握手后检查默认订阅，旧实现输出：
+
+```text
+successful HELLO did not subscribe telemetry automatically
+```
+
+### GREEN
+
+- 握手成功后由 MainWindow 自动发送 `SET_TELEMETRY(mask=0x07, period=100 ms)`，覆盖 IMU/PID/STATUS，默认 10 Hz。
+- ProtocolClient 为每个 pending request 记录单调计时，并在响应、超时或断开失败时发出最近请求延迟；总览页改为绑定该信号，不再只记录 HELLO。
+- 已握手设备发生普通请求失败时，DeviceClient 清除握手状态；MainWindow 锁定参数、遥测和动作控件，并显示“未连接/不可用”，直到重新握手。
+
 ## 验证
 
 使用已有 `E:\Qt\6.11.1\mingw_64` Qt 6.11.1、CMake、Ninja 和 MinGW 13.1.0；仅为当前构建进程临时补充工具链 PATH，未安装依赖。
