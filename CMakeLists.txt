@@ -24,8 +24,24 @@ add_executable(test_ui_smoke
 target_include_directories(test_ui_smoke PRIVATE src)
 target_link_libraries(test_ui_smoke PRIVATE Qt6::Widgets Qt6::SerialPort)
 
+add_executable(test_crc_codec
+    tests/test_crc_codec.cpp
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/ProtocolTypes.h
+)
+target_include_directories(test_crc_codec PRIVATE src)
+target_link_libraries(test_crc_codec PRIVATE Qt6::Core)
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_crc_codec COMMAND test_crc_codec)
+set_tests_properties(test_crc_codec PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
