@@ -48,6 +48,21 @@ add_executable(test_frame_parser
 target_include_directories(test_frame_parser PRIVATE src)
 target_link_libraries(test_frame_parser PRIVATE Qt6::Core)
 
+add_executable(test_protocol_client
+    tests/test_protocol_client.cpp
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+)
+target_include_directories(test_protocol_client PRIVATE src)
+target_link_libraries(test_protocol_client PRIVATE Qt6::Core)
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
@@ -60,5 +75,9 @@ set_tests_properties(test_crc_codec PROPERTIES
 )
 add_test(NAME test_frame_parser COMMAND test_frame_parser)
 set_tests_properties(test_frame_parser PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_protocol_client COMMAND test_protocol_client)
+set_tests_properties(test_protocol_client PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
