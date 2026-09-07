@@ -12,6 +12,22 @@ add_executable(robot_tuner
     src/main.cpp
     src/app/MainWindow.cpp
     src/app/MainWindow.h
+    src/device/DeviceClient.cpp
+    src/device/DeviceClient.h
+    src/device/ParameterCatalog.cpp
+    src/device/ParameterCatalog.h
+    src/device/TelemetryTypes.h
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+    src/serial/SerialController.cpp
+    src/serial/SerialController.h
 )
 target_include_directories(robot_tuner PRIVATE src)
 target_link_libraries(robot_tuner PRIVATE Qt6::Widgets Qt6::SerialPort)
@@ -20,9 +36,42 @@ add_executable(test_ui_smoke
     tests/test_ui_smoke.cpp
     src/app/MainWindow.cpp
     src/app/MainWindow.h
+    src/device/DeviceClient.cpp
+    src/device/DeviceClient.h
+    src/device/ParameterCatalog.cpp
+    src/device/ParameterCatalog.h
+    src/device/TelemetryTypes.h
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+    src/serial/SerialController.cpp
+    src/serial/SerialController.h
 )
 target_include_directories(test_ui_smoke PRIVATE src)
 target_link_libraries(test_ui_smoke PRIVATE Qt6::Widgets Qt6::SerialPort)
+
+add_executable(test_serial_controller
+    tests/test_serial_controller.cpp
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+    src/serial/SerialController.cpp
+    src/serial/SerialController.h
+)
+target_include_directories(test_serial_controller PRIVATE src)
+target_link_libraries(test_serial_controller PRIVATE Qt6::Core Qt6::SerialPort)
 
 add_executable(test_crc_codec
     tests/test_crc_codec.cpp
@@ -95,6 +144,10 @@ enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_serial_controller COMMAND test_serial_controller)
+set_tests_properties(test_serial_controller PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
 add_test(NAME test_crc_codec COMMAND test_crc_codec)
