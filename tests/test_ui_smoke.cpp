@@ -13,7 +13,10 @@
 
 #include "app/MainWindow.h"
 #include "pages/ChassisPage.h"
+#include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/OverviewPage.h"
+#include "widgets/TelemetryPlot.h"
 
 namespace {
 
@@ -48,6 +51,12 @@ int main(int argc, char **argv) {
         window.findChild<QPushButton *>("mechanismWriteButton");
     auto *imuRate = window.findChild<QAbstractSpinBox *>("imuRateSpinBox");
     auto *ramOnlyNotice = window.findChild<QLabel *>("ramOnlyNotice");
+    auto *imuPage = window.findChild<ImuPage *>();
+    auto *overviewPage = window.findChild<QWidget *>("总览");
+    auto *overviewLink =
+        window.findChild<QLabel *>("overviewLinkStateLabel");
+    auto *imuTelemetryRate =
+        window.findChild<QSpinBox *>("imuTelemetryRateSpinBox");
     if (!require(nav && nav->count() == 7, "navigation pages changed") ||
         !require(portCombo && baudCombo && refreshPortsButton && connectButton,
                  "connection controls are missing") ||
@@ -58,6 +67,14 @@ int main(int argc, char **argv) {
                  "parameter pages must be disabled before handshake") ||
         !require(actionPage && !actionPage->isEnabled(),
                  "action page must stay disabled before handshake") ||
+        !require(imuPage && !imuPage->isEnabled() && overviewPage &&
+                     overviewLink &&
+                     overviewLink->text() == QStringLiteral("未连接"),
+                 "overview or IMU telemetry page is not wired") ||
+        !require(imuTelemetryRate && imuTelemetryRate->minimum() == 1 &&
+                     imuTelemetryRate->maximum() == 50 &&
+                     !imuTelemetryRate->isEnabled(),
+                 "IMU telemetry rate control is invalid") ||
         !require(baudCombo->count() == 2 &&
                      connectionStatusLabel->text() == QStringLiteral("未连接"),
                  "connection defaults changed") ||
@@ -207,6 +224,89 @@ int main(int argc, char **argv) {
                      mechanismPageWrite && !mechanismPageWrite->isEnabled() &&
                      mechanismRead && mechanismRestore,
                  "mechanism units or handshake lock are missing")) {
+        return 1;
+    }
+
+    ImuPage imu;
+    auto *imuRateControl =
+        imu.findChild<QSpinBox *>("imuTelemetryRateSpinBox");
+    auto *imuError = imu.findChild<QLabel *>("imuTelemetryErrorLabel");
+    auto *imuAcceleration =
+        imu.findChild<QLabel *>("imuAccelerationXLabel");
+    auto *accelerationPlot = imu.findChild<TelemetryPlot *>("accelerationPlot");
+    int requestedRate = 0;
+    QObject::connect(&imu, &ImuPage::telemetryRateChanged,
+                     [&](quint16 rate) { requestedRate = rate; });
+    if (!require(imuRateControl && imuError && imuAcceleration &&
+                     accelerationPlot && !imuRateControl->isEnabled(),
+                 "standalone IMU page controls are invalid") ) {
+        return 1;
+    }
+    imu.setLinkBaudRate(9600);
+    if (!require(imuRateControl->maximum() == 20,
+                 "9600-baud IMU rate was not limited to 20 Hz")) {
+        return 1;
+    }
+    imu.setTelemetryConfiguration(0x07, 25);
+    if (!require(imu.findChild<QLabel *>("imuTelemetryRateStatusLabel")
+                     ->text()
+                     .contains(QStringLiteral("40 Hz")),
+                 "IMU page did not display the device's actual rate")) {
+        return 1;
+    }
+    imu.setConnected(true);
+    imuRateControl->setValue(10);
+    if (!require(requestedRate == 10,
+                 "IMU rate control did not emit the requested frequency")) {
+        return 1;
+    }
+    ImuSample imuSample;
+    imuSample.timestampMs = 1234;
+    imuSample.accelerationX = 1.25;
+    imuSample.accelerationY = -2.5;
+    imuSample.accelerationZ = 0.5;
+    imuSample.angularVelocityX = 4.0;
+    imuSample.angularVelocityY = -5.0;
+    imuSample.angularVelocityZ = 6.0;
+    imuSample.rollDegrees = 7.0;
+    imuSample.pitchDegrees = -8.0;
+    imuSample.yawDegrees = 9.0;
+    imu.setImuSample(imuSample);
+    if (!require(imuAcceleration->text().contains(QStringLiteral("1.250")) &&
+                     imuAcceleration->text().contains(QStringLiteral("g")),
+                 "IMU acceleration value or unit was not displayed") ||
+        !require(accelerationPlot->sampleCount() == 1,
+                 "IMU acceleration was not appended to the plot")) {
+        return 1;
+    }
+    imu.setCalibrationState(1);
+    if (!require(imu.findChild<QLabel *>("imuCalibrationStatusLabel")
+                     ->text()
+                     .contains(QStringLiteral("完成")),
+                 "IMU calibration result was not displayed")) {
+        return 1;
+    }
+    imu.setDeviceError(QStringLiteral("设备错误 0x04"));
+    if (!require(imuError->text().contains(QStringLiteral("0x04")),
+                 "IMU error message was not displayed")) {
+        return 1;
+    }
+
+    OverviewPage overview;
+    DeviceInfo info;
+    info.protocolVersion = 1;
+    info.firmwareMajor = 2;
+    info.firmwareMinor = 3;
+    info.firmwarePatch = 4;
+    overview.setDeviceInfo(info);
+    overview.setStatus(DeviceStatus{2, 1, 0, 0x000a, 1});
+    overview.setImuSample(imuSample);
+    if (!require(overview.findChild<QLabel *>("firmwareVersionLabel")
+                     ->text() == QStringLiteral("v2.3.4") &&
+                     overview.findChild<QLabel *>("emergencyStateLabel")
+                         ->text()
+                         .contains(QStringLiteral("急停")),
+                 "overview status fields were not displayed") ) {
         return 1;
     }
     mechanism.setConnected(true);

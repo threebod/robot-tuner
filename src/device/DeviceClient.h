@@ -16,6 +16,7 @@ public:
     explicit DeviceClient(ProtocolClient &protocol, QObject *parent = nullptr);
 
     bool hello();
+    bool getStatus();
     bool getParameterGroup(quint8 group);
     bool setParameterGroup(quint8 group,
                            const QVector<ParameterValue> &values);
@@ -30,6 +31,9 @@ signals:
     void parameterGroupReceived(quint8 group, QVector<ParameterValue> values);
     void imuSampleReceived(ImuSample sample);
     void pidSampleReceived(PidSample sample);
+    void statusReceived(DeviceStatus status);
+    void telemetryConfigured(quint8 acceptedMask, quint16 actualPeriodMs);
+    void imuCalibrationStateChanged(quint8 state);
     void deviceError(QString message);
     void terminalLog(QString message);
 
@@ -49,6 +53,9 @@ private:
     void decodeImu(const QByteArray &payload);
     void decodePid(const QByteArray &payload);
     void decodeStatus(const QByteArray &payload);
+    void decodeStatusResponse(const QByteArray &payload);
+    void decodeTelemetryConfiguration(const QByteArray &payload);
+    void decodeCalibrationState(const QByteArray &payload);
     void decodeResponseError(const QByteArray &payload);
 
     ProtocolClient *protocol_{};

@@ -12,13 +12,15 @@
 #include <utility>
 
 #include "pages/ChassisPage.h"
+#include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/OverviewPage.h"
 
 namespace {
 
 static const QStringList kPages = {
-    "总览", "底盘与 PID", "机械臂与舵机", "HWT101",
-    "动作测试", "串口终端", "视觉（预留）"
+    "总览", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
+    "串口终端", "视觉（预留）"
 };
 
 }  // namespace
@@ -69,9 +71,15 @@ MainWindow::MainWindow(QWidget *parent)
         navigationList->addItem(pageName);
 
         QWidget *page = nullptr;
-        if (pageName == QStringLiteral("底盘与 PID")) {
+        if (pageName == QStringLiteral("总览")) {
+            overviewPage_ = new OverviewPage(pageStack_);
+            page = overviewPage_;
+        } else if (pageName == QStringLiteral("底盘与 PID")) {
             chassisPage_ = new ChassisPage(pageStack_);
             page = chassisPage_;
+        } else if (pageName == QStringLiteral("HWT101")) {
+            imuPage_ = new ImuPage(pageStack_);
+            page = imuPage_;
         } else if (pageName == QStringLiteral("机械臂与舵机")) {
             mechanismPage_ = new MechanismPage(pageStack_);
             page = mechanismPage_;
@@ -110,13 +118,66 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleSerialClosed);
     connect(&serial_, &SerialController::serialError, this,
             &MainWindow::handleSerialError);
+    connect(baudCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+                if (imuPage_ != nullptr) {
+                    imuPage_->setLinkBaudRate(baudCombo_->currentData().toInt());
+                }
+            });
     connect(&device_, &DeviceClient::handshakeCompleted, this,
-            [this](DeviceInfo) {
+            [this](DeviceInfo info) {
                 setDeviceControlsEnabled(true);
                 connectionStatusLabel_->setText(QStringLiteral("设备已握手"));
+                if (overviewPage_ != nullptr) {
+                    overviewPage_->setDeviceInfo(info);
+                    overviewPage_->setLinkState(QStringLiteral("设备已握手"));
+                    overviewPage_->setLatency(connectionTimer_.isValid()
+                                                   ? connectionTimer_.elapsed()
+                                                   : -1);
+                }
+                device_.getStatus();
             });
     connect(&device_, &DeviceClient::deviceError, this,
             &MainWindow::handleDeviceError);
+    connect(&device_, &DeviceClient::imuSampleReceived, this,
+            [this](ImuSample sample) {
+                if (imuPage_ != nullptr) {
+                    imuPage_->setImuSample(sample);
+                }
+                if (overviewPage_ != nullptr) {
+                    overviewPage_->setImuSample(sample);
+                }
+            });
+    connect(&device_, &DeviceClient::pidSampleReceived, this,
+            [this](PidSample sample) {
+                if (imuPage_ != nullptr) {
+                    imuPage_->setPidSample(sample);
+                }
+                if (overviewPage_ != nullptr) {
+                    overviewPage_->setPidSample(sample);
+                }
+            });
+    connect(&device_, &DeviceClient::statusReceived, this,
+            [this](DeviceStatus status) {
+                if (overviewPage_ != nullptr) {
+                    overviewPage_->setStatus(status);
+                }
+                if (imuPage_ != nullptr) {
+                    imuPage_->setStatus(status);
+                }
+            });
+    connect(&device_, &DeviceClient::telemetryConfigured, this,
+            [this](quint8 mask, quint16 periodMs) {
+                if (imuPage_ != nullptr) {
+                    imuPage_->setTelemetryConfiguration(mask, periodMs);
+                }
+            });
+    connect(&device_, &DeviceClient::imuCalibrationStateChanged, this,
+            [this](quint8 state) {
+                if (imuPage_ != nullptr) {
+                    imuPage_->setCalibrationState(state);
+                }
+            });
     connect(chassisPage_, &ChassisPage::readRequested, &device_,
             &DeviceClient::getParameterGroup);
     connect(chassisPage_, &ChassisPage::writeRequested, &device_,
@@ -127,6 +188,10 @@ MainWindow::MainWindow(QWidget *parent)
             &DeviceClient::setParameterGroup);
     connect(&device_, &DeviceClient::parameterGroupReceived, this,
             &MainWindow::handleParameterGroup);
+    connect(imuPage_, &ImuPage::telemetryRateChanged, this,
+            &MainWindow::handleTelemetryRateChanged);
+    connect(imuPage_, &ImuPage::calibrationRequested, this,
+            &MainWindow::handleCalibrationRequested);
 
     setDeviceControlsEnabled(false);
     refreshPorts();
@@ -157,6 +222,11 @@ void MainWindow::handleSerialOpened() {
     refreshPortsButton_->setEnabled(false);
     connectButton_->setText(QStringLiteral("断开"));
     connectionStatusLabel_->setText(QStringLiteral("串口已连接，等待设备握手"));
+    if (overviewPage_ != nullptr) {
+        overviewPage_->setLinkState(QStringLiteral("串口已连接，等待设备握手"));
+        overviewPage_->setLatency(-1);
+    }
+    connectionTimer_.start();
     setDeviceControlsEnabled(false);
     device_.hello();
 }
@@ -167,14 +237,27 @@ void MainWindow::handleSerialClosed() {
     refreshPortsButton_->setEnabled(true);
     connectButton_->setText(QStringLiteral("连接"));
     connectionStatusLabel_->setText(QStringLiteral("未连接"));
+    if (overviewPage_ != nullptr) {
+        overviewPage_->setLinkState(QStringLiteral("未连接"));
+        overviewPage_->setLatency(-1);
+    }
     setDeviceControlsEnabled(false);
 }
 
 void MainWindow::handleSerialError(QString message) {
     connectionStatusLabel_->setText(std::move(message));
+    if (overviewPage_ != nullptr) {
+        overviewPage_->setLinkState(connectionStatusLabel_->text());
+    }
 }
 
 void MainWindow::handleDeviceError(QString message) {
+    if (overviewPage_ != nullptr) {
+        overviewPage_->setDeviceError(message);
+    }
+    if (imuPage_ != nullptr) {
+        imuPage_->setDeviceError(message);
+    }
     if (!device_.handshakeComplete()) {
         connectionStatusLabel_->setText(std::move(message));
     }
@@ -198,6 +281,9 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
     if (mechanismPage_ != nullptr) {
         mechanismPage_->setConnected(enabled);
     }
+    if (imuPage_ != nullptr) {
+        imuPage_->setConnected(enabled);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
             pageStack_->widget(index)->setEnabled(enabled);
@@ -206,4 +292,17 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
     if (emergencyStopButton_ != nullptr) {
         emergencyStopButton_->setEnabled(enabled);
     }
+}
+
+void MainWindow::handleTelemetryRateChanged(quint16 hz) {
+    if (hz == 0) {
+        return;
+    }
+    const quint16 periodMs = static_cast<quint16>(qMax<quint32>(
+        1, 1000u / static_cast<quint32>(hz)));
+    device_.setTelemetry(0x07, periodMs);
+}
+
+void MainWindow::handleCalibrationRequested() {
+    device_.calibrateImu();
 }

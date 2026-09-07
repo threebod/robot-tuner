@@ -145,6 +145,71 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    int statusCount = 0;
+    DeviceStatus latestStatus;
+    QObject::connect(&device, &DeviceClient::statusReceived,
+                     [&](const DeviceStatus &status) {
+                         ++statusCount;
+                         latestStatus = status;
+                     });
+    requestBytes.clear();
+    if (!require(device.getStatus(), "GET_STATUS request was not sent")) {
+        return 1;
+    }
+    const protocol::Frame statusRequest = capturedFrame(requestBytes);
+    if (!require(statusRequest.command ==
+                     static_cast<quint8>(protocol::Command::GetStatus),
+                 "GET_STATUS command is incorrect")) {
+        return 1;
+    }
+    feedResponse(&protocol, requestBytes, protocol::Command::GetStatus,
+                 QByteArray::fromHex("02 01 00 01 0a 00"));
+    if (!require(statusCount == 1 && latestStatus.mode == 2 &&
+                     latestStatus.emergency == 1 &&
+                     latestStatus.unlocked == 0 &&
+                     latestStatus.activeLink == 1 &&
+                     latestStatus.lastError == 0x000a,
+                 "GET_STATUS response was not decoded")) {
+        return 1;
+    }
+
+    int telemetryConfigurationCount = 0;
+    quint8 acceptedMask = 0;
+    quint16 actualPeriodMs = 0;
+    QObject::connect(&device, &DeviceClient::telemetryConfigured,
+                     [&](quint8 mask, quint16 periodMs) {
+                         ++telemetryConfigurationCount;
+                         acceptedMask = mask;
+                         actualPeriodMs = periodMs;
+                     });
+    requestBytes.clear();
+    if (!require(device.setTelemetry(0x07, 100),
+                 "SET_TELEMETRY request was not sent")) {
+        return 1;
+    }
+    feedResponse(&protocol, requestBytes, protocol::Command::SetTelemetry,
+                 QByteArray::fromHex("07 fa 00"));
+    if (!require(telemetryConfigurationCount == 1 && acceptedMask == 0x07 &&
+                     actualPeriodMs == 250,
+                 "SET_TELEMETRY response did not report the actual period")) {
+        return 1;
+    }
+
+    int calibrationState = -1;
+    QObject::connect(&device, &DeviceClient::imuCalibrationStateChanged,
+                     [&](quint8 state) { calibrationState = state; });
+    requestBytes.clear();
+    if (!require(device.calibrateImu(),
+                 "IMU_CALIBRATE request was not sent")) {
+        return 1;
+    }
+    feedResponse(&protocol, requestBytes, protocol::Command::ImuCalibrate,
+                 QByteArray(1, char(1)));
+    if (!require(calibrationState == 1,
+                 "IMU calibration state was not decoded")) {
+        return 1;
+    }
+
     requestBytes.clear();
     QVector<ParameterValue> values;
     values.push_back({0x1000, ValueType::Float32, QVariant(1.5)});
@@ -276,6 +341,19 @@ int main(int argc, char **argv) {
                      std::abs(sample.pitchDegrees + 90.0) < 1e-9 &&
                      std::abs(sample.yawDegrees - 45.0) < 1e-9,
                  "IMU angle conversion is incorrect")) {
+        return 1;
+    }
+
+    protocol::Frame statusEvent = imuEvent;
+    statusEvent.command =
+        static_cast<quint8>(protocol::Command::StatusTelemetry);
+    statusEvent.payload = QByteArray::fromHex("02 01 01 34 12");
+    protocol.ingestBytes(QByteArrayView(encodeFrame(statusEvent)));
+    if (!require(statusCount == 2 && latestStatus.mode == 2 &&
+                     latestStatus.emergency == 1 &&
+                     latestStatus.unlocked == 1 &&
+                     latestStatus.lastError == 0x1234,
+                 "STATUS_TELEMETRY event was not decoded")) {
         return 1;
     }
 

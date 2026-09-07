@@ -14,6 +14,12 @@ add_executable(robot_tuner
     src/pages/ChassisPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/OverviewPage.cpp
+    src/pages/OverviewPage.h
+    src/pages/ImuPage.cpp
+    src/pages/ImuPage.h
+    src/widgets/TelemetryPlot.cpp
+    src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
@@ -42,6 +48,12 @@ add_executable(test_ui_smoke
     src/pages/ChassisPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/OverviewPage.cpp
+    src/pages/OverviewPage.h
+    src/pages/ImuPage.cpp
+    src/pages/ImuPage.h
+    src/widgets/TelemetryPlot.cpp
+    src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
@@ -148,6 +160,14 @@ add_executable(test_device_client
 target_include_directories(test_device_client PRIVATE src)
 target_link_libraries(test_device_client PRIVATE Qt6::Core)
 
+add_executable(test_telemetry_plot
+    tests/test_telemetry_plot.cpp
+    src/widgets/TelemetryPlot.cpp
+    src/widgets/TelemetryPlot.h
+)
+target_include_directories(test_telemetry_plot PRIVATE src)
+target_link_libraries(test_telemetry_plot PRIVATE Qt6::Widgets)
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
@@ -176,5 +196,10 @@ set_tests_properties(test_parameter_catalog PROPERTIES
 )
 add_test(NAME test_device_client COMMAND test_device_client)
 set_tests_properties(test_device_client PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_telemetry_plot COMMAND test_telemetry_plot)
+set_tests_properties(test_telemetry_plot PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )

@@ -68,8 +68,19 @@ struct PidSample {
     double actual{};
 };
 
+struct DeviceStatus {
+    quint8 mode{};
+    quint8 emergency{};
+    quint8 unlocked{};
+    quint16 lastError{};
+    quint8 activeLink{};
+};
+
+using StatusSample = DeviceStatus;
+
 Q_DECLARE_METATYPE(ParameterValue)
 Q_DECLARE_METATYPE(QVector<ParameterValue>)
 Q_DECLARE_METATYPE(DeviceInfo)
 Q_DECLARE_METATYPE(ImuSample)
 Q_DECLARE_METATYPE(PidSample)
+Q_DECLARE_METATYPE(DeviceStatus)

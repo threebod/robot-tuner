@@ -205,6 +205,13 @@ bool DeviceClient::hello() {
     return true;
 }
 
+bool DeviceClient::getStatus() {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    return send(protocol::Command::GetStatus, {});
+}
+
 bool DeviceClient::getParameterGroup(quint8 group) {
     if (catalog_.group(group).isEmpty()) {
         return reject(QStringLiteral("参数组不存在"), 0x05);
@@ -334,9 +341,18 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
     case protocol::Command::Hello:
         decodeHello(frame.payload);
         break;
+    case protocol::Command::GetStatus:
+        decodeStatusResponse(frame.payload);
+        break;
     case protocol::Command::GetParamGroup:
     case protocol::Command::SetParamGroup:
         decodeParameterGroup(frame.payload);
+        break;
+    case protocol::Command::SetTelemetry:
+        decodeTelemetryConfiguration(frame.payload);
+        break;
+    case protocol::Command::ImuCalibrate:
+        decodeCalibrationState(frame.payload);
         break;
     default:
         break;
@@ -524,7 +540,50 @@ void DeviceClient::decodePid(const QByteArray &payload) {
 void DeviceClient::decodeStatus(const QByteArray &payload) {
     if (payload.size() != 5) {
         reportError(0x04, QStringLiteral("状态遥测长度错误"));
+        return;
     }
+    DeviceStatus status;
+    status.mode = static_cast<quint8>(payload.at(0));
+    status.emergency = static_cast<quint8>(payload.at(1));
+    status.unlocked = static_cast<quint8>(payload.at(2));
+    status.lastError = readU16(payload, 3);
+    emit statusReceived(status);
+}
+
+void DeviceClient::decodeStatusResponse(const QByteArray &payload) {
+    if (payload.size() != 6) {
+        reportError(0x04, QStringLiteral("状态响应长度错误"));
+        return;
+    }
+    DeviceStatus status;
+    status.mode = static_cast<quint8>(payload.at(0));
+    status.emergency = static_cast<quint8>(payload.at(1));
+    status.unlocked = static_cast<quint8>(payload.at(2));
+    status.activeLink = static_cast<quint8>(payload.at(3));
+    status.lastError = readU16(payload, 4);
+    emit statusReceived(status);
+}
+
+void DeviceClient::decodeTelemetryConfiguration(const QByteArray &payload) {
+    if (payload.size() != 3) {
+        reportError(0x04, QStringLiteral("遥测配置响应长度错误"));
+        return;
+    }
+    emit telemetryConfigured(static_cast<quint8>(payload.at(0)),
+                             readU16(payload, 1));
+}
+
+void DeviceClient::decodeCalibrationState(const QByteArray &payload) {
+    if (payload.size() != 1) {
+        reportError(0x04, QStringLiteral("IMU 校准响应长度错误"));
+        return;
+    }
+    const quint8 state = static_cast<quint8>(payload.at(0));
+    if (state > 2) {
+        reportError(0x04, QStringLiteral("IMU 校准状态无效"));
+        return;
+    }
+    emit imuCalibrationStateChanged(state);
 }
 
 void DeviceClient::decodeResponseError(const QByteArray &payload) {

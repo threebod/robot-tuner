@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QElapsedTimer>
 
 #include "device/DeviceClient.h"
 #include "protocol/ProtocolClient.h"
@@ -13,6 +14,8 @@ class QPushButton;
 class QStackedWidget;
 class ChassisPage;
 class MechanismPage;
+class OverviewPage;
+class ImuPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -28,6 +31,8 @@ private slots:
     void handleSerialError(QString message);
     void handleDeviceError(QString message);
     void handleParameterGroup(quint8 group, QVector<ParameterValue> values);
+    void handleTelemetryRateChanged(quint16 hz);
+    void handleCalibrationRequested();
 
 private:
     void setDeviceControlsEnabled(bool enabled);
@@ -43,6 +48,9 @@ private:
     QLabel *connectionStatusLabel_{};
     QPushButton *emergencyStopButton_{};
     QStackedWidget *pageStack_{};
+    OverviewPage *overviewPage_{};
     ChassisPage *chassisPage_{};
+    ImuPage *imuPage_{};
     MechanismPage *mechanismPage_{};
+    QElapsedTimer connectionTimer_;
 };
