@@ -2,6 +2,7 @@
 #include <QByteArrayView>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QThread>
 #include <QTimer>
 
 #include <iostream>
@@ -71,6 +72,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    const quint8 errorSequence = client.sendRequest(
+        protocol::Command::GetStatus, QByteArray("error-request"));
+    const QVector<protocol::Frame> errorRequests =
+        parser.push(QByteArrayView(requestBytes));
+    if (!require(errorRequests.size() == 1 &&
+                     errorRequests.front().sequence == errorSequence,
+                 "error request sequence could not be recovered")) {
+        return 1;
+    }
+    protocol::Frame errorResponse = errorRequests.front();
+    errorResponse.flags = protocol::Error;
+    errorResponse.payload = QByteArray("error-response");
+    client.ingestBytes(QByteArrayView(encodeFrame(errorResponse)));
+    if (!require(responseCount == 2 && failureCount == 0,
+                 "an error response did not match the pending request")) {
+        return 1;
+    }
+
     ProtocolClient retryClient(10);
     int retryBytesReadyCount = 0;
     int retryFailureCount = 0;
@@ -103,6 +122,36 @@ int main(int argc, char **argv) {
     }
     if (!require(retryFailureCount == 1,
                  "a request did not fail after its retry was exhausted")) {
+        return 1;
+    }
+
+    ProtocolClient reentrantClient(10);
+    int reentrantBytesReadyCount = 0;
+    int reentrantDisconnectFailureCount = 0;
+    QObject::connect(&reentrantClient, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &) {
+                         ++reentrantBytesReadyCount;
+                         if (reentrantBytesReadyCount == 3) {
+                             reentrantClient.clearPending();
+                         }
+                     });
+    QObject::connect(&reentrantClient, &ProtocolClient::requestFailed,
+                     [&](quint8, const QString &) {
+                         ++reentrantDisconnectFailureCount;
+                     });
+
+    reentrantClient.sendRequest(protocol::Command::GetStatus, {});
+    reentrantClient.sendRequest(protocol::Command::GetStatus, {});
+    QThread::msleep(25);
+    QEventLoop reentrantLoop;
+    QTimer::singleShot(10, &reentrantLoop, &QEventLoop::quit);
+    reentrantLoop.exec();
+    if (!require(reentrantBytesReadyCount == 3,
+                 "a stale retry was emitted after clearPending reentrancy")) {
+        return 1;
+    }
+    if (!require(reentrantDisconnectFailureCount == 2,
+                 "clearPending did not fail all reentrant requests")) {
         return 1;
     }
 

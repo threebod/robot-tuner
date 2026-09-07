@@ -86,7 +86,11 @@ void ProtocolClient::clearPending() {
 }
 
 void ProtocolClient::checkDeadlines() {
-    QVector<QByteArray> retries;
+    struct Retry {
+        quint8 sequence;
+        QByteArray bytes;
+    };
+    QVector<Retry> retries;
     QVector<quint8> failures;
     for (auto pending = pending_.begin(); pending != pending_.end();) {
         if (!pending->deadline.hasExpired()) {
@@ -97,7 +101,7 @@ void ProtocolClient::checkDeadlines() {
         if (pending->retriesRemaining > 0) {
             --pending->retriesRemaining;
             pending->deadline = QDeadlineTimer(timeoutMs_);
-            retries.push_back(encodeFrame(pending->frame));
+            retries.push_back({pending.key(), encodeFrame(pending->frame)});
             ++pending;
             continue;
         }
@@ -106,8 +110,10 @@ void ProtocolClient::checkDeadlines() {
         pending = pending_.erase(pending);
     }
 
-    for (const QByteArray &encoded : retries) {
-        emit bytesReady(encoded);
+    for (const Retry &retry : retries) {
+        if (pending_.contains(retry.sequence)) {
+            emit bytesReady(retry.bytes);
+        }
     }
     for (const quint8 sequence : failures) {
         emit requestFailed(sequence, QStringLiteral("请求超时"));
