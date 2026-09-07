@@ -63,6 +63,34 @@ add_executable(test_protocol_client
 target_include_directories(test_protocol_client PRIVATE src)
 target_link_libraries(test_protocol_client PRIVATE Qt6::Core)
 
+add_executable(test_parameter_catalog
+    tests/test_parameter_catalog.cpp
+    src/device/ParameterCatalog.cpp
+    src/device/ParameterCatalog.h
+)
+target_include_directories(test_parameter_catalog PRIVATE src)
+target_link_libraries(test_parameter_catalog PRIVATE Qt6::Core)
+
+add_executable(test_device_client
+    tests/test_device_client.cpp
+    src/device/DeviceClient.cpp
+    src/device/DeviceClient.h
+    src/device/ParameterCatalog.cpp
+    src/device/ParameterCatalog.h
+    src/device/TelemetryTypes.h
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+)
+target_include_directories(test_device_client PRIVATE src)
+target_link_libraries(test_device_client PRIVATE Qt6::Core)
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
@@ -79,5 +107,13 @@ set_tests_properties(test_frame_parser PROPERTIES
 )
 add_test(NAME test_protocol_client COMMAND test_protocol_client)
 set_tests_properties(test_protocol_client PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_parameter_catalog COMMAND test_parameter_catalog)
+set_tests_properties(test_parameter_catalog PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_device_client COMMAND test_device_client)
+set_tests_properties(test_device_client PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
