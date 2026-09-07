@@ -11,6 +11,8 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 class QStackedWidget;
+class ChassisPage;
+class MechanismPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -25,6 +27,7 @@ private slots:
     void handleSerialClosed();
     void handleSerialError(QString message);
     void handleDeviceError(QString message);
+    void handleParameterGroup(quint8 group, QVector<ParameterValue> values);
 
 private:
     void setDeviceControlsEnabled(bool enabled);
@@ -40,4 +43,6 @@ private:
     QLabel *connectionStatusLabel_{};
     QPushButton *emergencyStopButton_{};
     QStackedWidget *pageStack_{};
+    ChassisPage *chassisPage_{};
+    MechanismPage *mechanismPage_{};
 };

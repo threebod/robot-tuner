@@ -11,6 +11,9 @@
 
 #include <utility>
 
+#include "pages/ChassisPage.h"
+#include "pages/MechanismPage.h"
+
 namespace {
 
 static const QStringList kPages = {
@@ -65,12 +68,23 @@ MainWindow::MainWindow(QWidget *parent)
     for (const auto &pageName : kPages) {
         navigationList->addItem(pageName);
 
-        auto *page = new QWidget(pageStack_);
+        QWidget *page = nullptr;
+        if (pageName == QStringLiteral("底盘与 PID")) {
+            chassisPage_ = new ChassisPage(pageStack_);
+            page = chassisPage_;
+        } else if (pageName == QStringLiteral("机械臂与舵机")) {
+            mechanismPage_ = new MechanismPage(pageStack_);
+            page = mechanismPage_;
+        } else {
+            page = new QWidget(pageStack_);
+        }
         page->setObjectName(pageName);
-        auto *pageLayout = new QVBoxLayout(page);
-        auto *pageLabel = new QLabel(pageName, page);
-        pageLabel->setAlignment(Qt::AlignCenter);
-        pageLayout->addWidget(pageLabel);
+        if (page->layout() == nullptr) {
+            auto *pageLayout = new QVBoxLayout(page);
+            auto *pageLabel = new QLabel(pageName, page);
+            pageLabel->setAlignment(Qt::AlignCenter);
+            pageLayout->addWidget(pageLabel);
+        }
         pageStack_->addWidget(page);
     }
 
@@ -103,6 +117,16 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(&device_, &DeviceClient::deviceError, this,
             &MainWindow::handleDeviceError);
+    connect(chassisPage_, &ChassisPage::readRequested, &device_,
+            &DeviceClient::getParameterGroup);
+    connect(chassisPage_, &ChassisPage::writeRequested, &device_,
+            &DeviceClient::setParameterGroup);
+    connect(mechanismPage_, &MechanismPage::readRequested, &device_,
+            &DeviceClient::getParameterGroup);
+    connect(mechanismPage_, &MechanismPage::writeRequested, &device_,
+            &DeviceClient::setParameterGroup);
+    connect(&device_, &DeviceClient::parameterGroupReceived, this,
+            &MainWindow::handleParameterGroup);
 
     setDeviceControlsEnabled(false);
     refreshPorts();
@@ -156,7 +180,24 @@ void MainWindow::handleDeviceError(QString message) {
     }
 }
 
+void MainWindow::handleParameterGroup(quint8 group,
+                                      QVector<ParameterValue> values) {
+    Q_UNUSED(group);
+    if (chassisPage_ != nullptr) {
+        chassisPage_->setValues(values);
+    }
+    if (mechanismPage_ != nullptr) {
+        mechanismPage_->setValues(values);
+    }
+}
+
 void MainWindow::setDeviceControlsEnabled(bool enabled) {
+    if (chassisPage_ != nullptr) {
+        chassisPage_->setConnected(enabled);
+    }
+    if (mechanismPage_ != nullptr) {
+        mechanismPage_->setConnected(enabled);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
             pageStack_->widget(index)->setEnabled(enabled);

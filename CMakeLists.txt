@@ -10,6 +10,10 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets SerialPort)
 
 add_executable(robot_tuner
     src/main.cpp
+    src/pages/ChassisPage.cpp
+    src/pages/ChassisPage.h
+    src/pages/MechanismPage.cpp
+    src/pages/MechanismPage.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
@@ -34,6 +38,10 @@ target_link_libraries(robot_tuner PRIVATE Qt6::Widgets Qt6::SerialPort)
 
 add_executable(test_ui_smoke
     tests/test_ui_smoke.cpp
+    src/pages/ChassisPage.cpp
+    src/pages/ChassisPage.h
+    src/pages/MechanismPage.cpp
+    src/pages/MechanismPage.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
