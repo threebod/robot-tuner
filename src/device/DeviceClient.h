@@ -53,4 +53,6 @@ private:
     ProtocolClient *protocol_{};
     ParameterCatalog catalog_;
     bool handshakeComplete_{};
+    bool helloPending_{};
+    quint8 helloSequence_{};
 };

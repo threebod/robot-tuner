@@ -8,8 +8,13 @@
 namespace {
 
 constexpr int kImuPayloadWithTimestamp = 4 + 9 * 2;
-constexpr int kImuPayloadWithoutTimestamp = 9 * 2;
 constexpr int kPidPayloadSize = 4 + 3 * 2;
+
+enum class TypedDecodeResult {
+    Ok,
+    Truncated,
+    Invalid,
+};
 
 quint16 readU16(const QByteArray &bytes, int offset) {
     return static_cast<quint16>(
@@ -82,8 +87,8 @@ bool readNumeric(const QVariant &value, ValueType type, quint32 *bits,
     return false;
 }
 
-bool decodeTypedValue(const QByteArray &payload, int *offset, ValueType type,
-                      QVariant *value) {
+TypedDecodeResult decodeTypedValue(const QByteArray &payload, int *offset,
+                                   ValueType type, QVariant *value) {
     int width = 0;
     switch (type) {
     case ValueType::UInt8:
@@ -100,10 +105,10 @@ bool decodeTypedValue(const QByteArray &payload, int *offset, ValueType type,
         width = 4;
         break;
     default:
-        return false;
+        return TypedDecodeResult::Invalid;
     }
     if (*offset < 0 || *offset + width > payload.size()) {
-        return false;
+        return TypedDecodeResult::Truncated;
     }
 
     switch (type) {
@@ -131,14 +136,14 @@ bool decodeTypedValue(const QByteArray &payload, int *offset, ValueType type,
         float converted = 0.0f;
         std::memcpy(&converted, &bits, sizeof(converted));
         if (!std::isfinite(converted)) {
-            return false;
+            return TypedDecodeResult::Invalid;
         }
         *value = QVariant::fromValue(converted);
         break;
     }
     }
     *offset += width;
-    return true;
+    return TypedDecodeResult::Ok;
 }
 
 QString errorText(quint8 code) {
@@ -189,7 +194,13 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
-    return send(protocol::Command::Hello, {});
+    if (protocol_ == nullptr) {
+        helloPending_ = false;
+        return reject(QStringLiteral("协议客户端为空"), 0x02);
+    }
+    helloPending_ = true;
+    helloSequence_ = protocol_->sendRequest(protocol::Command::Hello, {});
+    return true;
 }
 
 bool DeviceClient::getParameterGroup(quint8 group) {
@@ -202,6 +213,9 @@ bool DeviceClient::getParameterGroup(quint8 group) {
 
 bool DeviceClient::setParameterGroup(
     quint8 group, const QVector<ParameterValue> &values) {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
     if (catalog_.group(group).isEmpty()) {
         return reject(QStringLiteral("参数组不存在"), 0x05);
     }
@@ -257,6 +271,9 @@ bool DeviceClient::setParameterGroup(
 }
 
 bool DeviceClient::setTelemetry(quint8 mask, quint16 periodMs) {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
     QByteArray payload;
     payload.append(static_cast<char>(mask));
     appendU16(&payload, periodMs);
@@ -264,6 +281,9 @@ bool DeviceClient::setTelemetry(quint8 mask, quint16 periodMs) {
 }
 
 bool DeviceClient::calibrateImu() {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
     return send(protocol::Command::ImuCalibrate, {});
 }
 
@@ -297,6 +317,10 @@ void DeviceClient::reportError(quint8 code, const QString &detail) {
 }
 
 void DeviceClient::handleResponse(protocol::Frame frame) {
+    if (frame.command == static_cast<quint8>(protocol::Command::Hello)) {
+        helloPending_ = false;
+        handshakeComplete_ = false;
+    }
     if ((frame.flags & protocol::Error) != 0) {
         decodeResponseError(frame.payload);
         return;
@@ -331,7 +355,14 @@ void DeviceClient::handleEvent(protocol::Frame frame) {
 }
 
 void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
-    Q_UNUSED(sequence)
+    if (helloPending_ && sequence == helloSequence_) {
+        helloPending_ = false;
+        handshakeComplete_ = false;
+    }
+    if (reason == QStringLiteral("连接已断开")) {
+        handshakeComplete_ = false;
+        helloPending_ = false;
+    }
     emit deviceError(reason);
     emit terminalLog(reason);
 }
@@ -367,6 +398,10 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
     }
     const quint8 group = static_cast<quint8>(payload.at(0));
     const quint8 count = static_cast<quint8>(payload.at(1));
+    if (catalog_.group(group).isEmpty()) {
+        reportError(0x05, QStringLiteral("参数组不存在"));
+        return;
+    }
     int offset = 2;
     QVector<ParameterValue> values;
     values.reserve(count);
@@ -380,8 +415,36 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
         const auto type = static_cast<ValueType>(
             static_cast<quint8>(payload.at(offset++)));
         QVariant value;
-        if (!decodeTypedValue(payload, &offset, type, &value)) {
+        const TypedDecodeResult decodeResult =
+            decodeTypedValue(payload, &offset, type, &value);
+        if (decodeResult == TypedDecodeResult::Truncated) {
+            reportError(0x04, QStringLiteral("参数组项目值长度错误"));
+            return;
+        }
+        if (decodeResult != TypedDecodeResult::Ok) {
             reportError(0x06, QStringLiteral("参数组项目类型错误"));
+            return;
+        }
+
+        const ParameterSpec *spec = catalog_.find(id);
+        if (spec == nullptr) {
+            reportError(0x05, QStringLiteral("参数不存在"));
+            return;
+        }
+        if (spec->group != group) {
+            reportError(0x05, QStringLiteral("参数不属于该参数组"));
+            return;
+        }
+        if (spec->type != type) {
+            reportError(0x06, QStringLiteral("参数类型错误"));
+            return;
+        }
+        QString validationError;
+        if (!catalog_.validate(id, value, &validationError)) {
+            const quint8 code = validationError.contains(QStringLiteral("0x07"))
+                ? 0x07
+                : validationError.contains(QStringLiteral("0x06")) ? 0x06 : 0x05;
+            reportError(code, validationError);
             return;
         }
         values.push_back(ParameterValue{id, type, value});
@@ -394,15 +457,14 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
 }
 
 void DeviceClient::decodeImu(const QByteArray &payload) {
-    int offset = 0;
-    ImuSample sample;
-    if (payload.size() == kImuPayloadWithTimestamp) {
-        sample.timestampMs = readU32(payload, 0);
-        offset = 4;
-    } else if (payload.size() != kImuPayloadWithoutTimestamp) {
+    if (payload.size() != kImuPayloadWithTimestamp) {
         reportError(0x04, QStringLiteral("IMU 遥测长度错误"));
         return;
     }
+
+    constexpr int offset = 4;
+    ImuSample sample;
+    sample.timestampMs = readU32(payload, 0);
 
     const qint16 rawAx = readI16(payload, offset);
     const qint16 rawAy = readI16(payload, offset + 2);
@@ -450,7 +512,7 @@ void DeviceClient::decodePid(const QByteArray &payload) {
 }
 
 void DeviceClient::decodeStatus(const QByteArray &payload) {
-    if (payload.size() != 7 && payload.size() != 5) {
+    if (payload.size() != 5) {
         reportError(0x04, QStringLiteral("状态遥测长度错误"));
     }
 }

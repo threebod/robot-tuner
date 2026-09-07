@@ -4,6 +4,7 @@
 #include <QVariant>
 
 #include <cmath>
+#include <cstring>
 #include <iostream>
 
 #include "device/DeviceClient.h"
@@ -41,6 +42,42 @@ void appendU32(QByteArray *bytes, quint32 value) {
     bytes->append(static_cast<char>((value >> 24) & 0xff));
 }
 
+protocol::Frame capturedFrame(const QByteArray &bytes) {
+    FrameParser parser;
+    const QVector<protocol::Frame> frames = parser.push(QByteArrayView(bytes));
+    return frames.isEmpty() ? protocol::Frame{} : frames.front();
+}
+
+QByteArray floatBytes(float value) {
+    QByteArray bytes;
+    quint32 bits = 0;
+    static_assert(sizeof(bits) == sizeof(value));
+    std::memcpy(&bits, &value, sizeof(bits));
+    appendU32(&bytes, bits);
+    return bytes;
+}
+
+QByteArray parameterResponsePayload(quint8 group, quint16 id, ValueType type,
+                                    const QByteArray &valueBytes) {
+    QByteArray payload;
+    payload.append(static_cast<char>(group));
+    payload.append(static_cast<char>(1));
+    appendU16(&payload, id);
+    payload.append(static_cast<char>(type));
+    payload.append(valueBytes);
+    return payload;
+}
+
+void feedResponse(ProtocolClient *protocol, const QByteArray &requestBytes,
+                  protocol::Command command, const QByteArray &payload,
+                  quint8 flags = protocol::Response) {
+    protocol::Frame response = capturedFrame(requestBytes);
+    response.flags = flags;
+    response.command = static_cast<quint8>(command);
+    response.payload = payload;
+    protocol->ingestBytes(QByteArrayView(encodeFrame(response)));
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -63,6 +100,48 @@ int main(int argc, char **argv) {
                  "GET_PARAM_GROUP command is incorrect") ||
         !require(groupRequests.front().payload == QByteArray(1, '\x10'),
                  "GET_PARAM_GROUP payload must contain only the group")) {
+        return 1;
+    }
+
+    ProtocolClient lockedProtocol;
+    DeviceClient lockedDevice(&lockedProtocol);
+    int lockedBytes = 0;
+    int lockedErrors = 0;
+    QObject::connect(&lockedProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &) { ++lockedBytes; });
+    QObject::connect(&lockedDevice, &DeviceClient::deviceError,
+                     [&](const QString &) { ++lockedErrors; });
+    QVector<ParameterValue> lockedValues;
+    lockedValues.push_back({0x1000, ValueType::Float32, QVariant(1.5)});
+    if (!require(!lockedDevice.setParameterGroup(0x10, lockedValues),
+                 "SET_PARAM_GROUP was allowed before HELLO") ||
+        !require(!lockedDevice.setTelemetry(1, 100),
+                 "SET_TELEMETRY was allowed before HELLO") ||
+        !require(!lockedDevice.calibrateImu(),
+                 "IMU calibration was allowed before HELLO") ||
+        !require(lockedBytes == 0 && lockedErrors == 3,
+                 "pre-handshake commands did not fail locally")) {
+        return 1;
+    }
+
+    requestBytes.clear();
+    if (!require(device.hello(), "HELLO request was not sent")) {
+        return 1;
+    }
+    const protocol::Frame helloRequest = capturedFrame(requestBytes);
+    QByteArray helloPayload;
+    helloPayload.append(char(1));
+    helloPayload.append(char(2));
+    helloPayload.append(char(3));
+    helloPayload.append(char(4));
+    appendU32(&helloPayload, 0x11223344);
+    feedResponse(&protocol, requestBytes, protocol::Command::Hello,
+                 helloPayload);
+    if (!require(device.handshakeComplete(),
+                 "a successful HELLO did not unlock the device service") ||
+        !require(helloRequest.command ==
+                     static_cast<quint8>(protocol::Command::Hello),
+                 "HELLO command is incorrect")) {
         return 1;
     }
 
@@ -103,6 +182,64 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    int parameterGroupCount = 0;
+    QObject::connect(&device, &DeviceClient::parameterGroupReceived,
+                     [&](quint8, const QVector<ParameterValue> &) {
+                         ++parameterGroupCount;
+                     });
+    requestBytes.clear();
+    device.getParameterGroup(0x10);
+    feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
+                 parameterResponsePayload(0x10, 0x1000, ValueType::Float32,
+                                          floatBytes(1.5f)));
+    if (!require(parameterGroupCount == 1,
+                 "a valid parameter readback was rejected")) {
+        return 1;
+    }
+
+    const struct {
+        quint16 id;
+        ValueType type;
+        QByteArray value;
+        const char *message;
+    } invalidReadbacks[] = {
+        {0x7fff, ValueType::Float32, floatBytes(1.5f),
+         "unknown readback parameter was accepted"},
+        {0x2000, ValueType::Int32, QByteArray::fromHex("01000000"),
+         "readback parameter from another group was accepted"},
+        {0x1000, ValueType::UInt16, QByteArray::fromHex("0100"),
+         "readback type mismatch was accepted"},
+        {0x1000, ValueType::Float32, floatBytes(21.0f),
+         "out-of-range readback parameter was accepted"},
+    };
+    for (const auto &invalid : invalidReadbacks) {
+        requestBytes.clear();
+        device.getParameterGroup(0x10);
+        const int groupsBefore = parameterGroupCount;
+        const int errorsBefore = deviceErrorCount;
+        feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
+                     parameterResponsePayload(0x10, invalid.id, invalid.type,
+                                              invalid.value));
+        if (!require(parameterGroupCount == groupsBefore, invalid.message) ||
+            !require(deviceErrorCount == errorsBefore + 1,
+                     "invalid readback did not report an error")) {
+            return 1;
+        }
+    }
+
+    requestBytes.clear();
+    device.getParameterGroup(0x10);
+    const int truncatedErrorsBefore = deviceErrorCount;
+    feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
+                 parameterResponsePayload(0x10, 0x1000, ValueType::Float32,
+                                          QByteArray::fromHex("0000")));
+    if (!require(deviceErrorCount == truncatedErrorsBefore + 1,
+                 "truncated typed value did not report an error") ||
+        !require(latestError.contains(QStringLiteral("0x04")),
+                 "truncated typed value did not report LENGTH")) {
+        return 1;
+    }
+
     int imuCount = 0;
     ImuSample sample;
     QObject::connect(&device, &DeviceClient::imuSampleReceived,
@@ -139,6 +276,62 @@ int main(int argc, char **argv) {
                      std::abs(sample.pitchDegrees + 90.0) < 1e-9 &&
                      std::abs(sample.yawDegrees - 45.0) < 1e-9,
                  "IMU angle conversion is incorrect")) {
+        return 1;
+    }
+
+    protocol::Frame shortImu = imuEvent;
+    shortImu.payload.remove(0, 4);
+    const int shortImuErrorsBefore = deviceErrorCount;
+    protocol.ingestBytes(QByteArrayView(encodeFrame(shortImu)));
+    if (!require(imuCount == 1,
+                 "an 18-byte IMU event was incorrectly accepted") ||
+        !require(deviceErrorCount == shortImuErrorsBefore + 1 &&
+                     latestError.contains(QStringLiteral("0x04")),
+                 "an IMU event without timestamp did not report LENGTH")) {
+        return 1;
+    }
+
+    protocol::Frame invalidStatus = imuEvent;
+    invalidStatus.command =
+        static_cast<quint8>(protocol::Command::StatusTelemetry);
+    invalidStatus.payload = QByteArray::fromHex("01000000000000");
+    const int statusErrorsBefore = deviceErrorCount;
+    protocol.ingestBytes(QByteArrayView(encodeFrame(invalidStatus)));
+    if (!require(deviceErrorCount == statusErrorsBefore + 1 &&
+                     latestError.contains(QStringLiteral("0x04")),
+                 "a non-five-byte status event was accepted")) {
+        return 1;
+    }
+
+    requestBytes.clear();
+    device.hello();
+    feedResponse(&protocol, requestBytes, protocol::Command::Hello,
+                 QByteArray::fromHex("02 02 03 04 44 33 22 11"));
+    if (!require(!device.handshakeComplete(),
+                 "an incompatible HELLO response kept the service unlocked")) {
+        return 1;
+    }
+    requestBytes.clear();
+    device.hello();
+    feedResponse(&protocol, requestBytes, protocol::Command::Hello,
+                 helloPayload);
+    if (!require(device.handshakeComplete(),
+                 "a second successful HELLO did not unlock the service")) {
+        return 1;
+    }
+    requestBytes.clear();
+    device.hello();
+    feedResponse(&protocol, requestBytes, protocol::Command::Hello,
+                 QByteArray(1, char(0x07)), protocol::Response | protocol::Error);
+    if (!require(!device.handshakeComplete(),
+                 "a HELLO error response kept the service unlocked")) {
+        return 1;
+    }
+    requestBytes.clear();
+    device.hello();
+    protocol.clearPending();
+    if (!require(!device.handshakeComplete(),
+                 "disconnect did not clear the handshake state")) {
         return 1;
     }
 

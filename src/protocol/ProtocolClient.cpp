@@ -59,6 +59,9 @@ void ProtocolClient::ingestBytes(QByteArrayView bytes) {
         if (pending == pending_.end()) {
             continue;
         }
+        if (pending->frame.command != frame.command) {
+            continue;
+        }
 
         pending_.erase(pending);
         if (pending_.isEmpty()) {

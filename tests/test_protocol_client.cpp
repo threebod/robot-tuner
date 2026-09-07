@@ -72,6 +72,37 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    const int responseCountBeforeWrongCommand = responseCount;
+    const quint8 commandMatchSequence = client.sendRequest(
+        protocol::Command::GetStatus, {});
+    const QVector<protocol::Frame> commandMatchRequests =
+        parser.push(QByteArrayView(requestBytes));
+    if (!require(commandMatchRequests.size() == 1 &&
+                     commandMatchRequests.front().sequence ==
+                         commandMatchSequence,
+                 "command-match request sequence could not be recovered")) {
+        return 1;
+    }
+    protocol::Frame wrongCommandResponse = commandMatchRequests.front();
+    wrongCommandResponse.flags = protocol::Response;
+    wrongCommandResponse.command =
+        static_cast<quint8>(protocol::Command::Hello);
+    wrongCommandResponse.payload = QByteArray("wrong-command");
+    client.ingestBytes(QByteArrayView(encodeFrame(wrongCommandResponse)));
+    if (!require(responseCount == responseCountBeforeWrongCommand,
+                 "a response with a matching sequence but wrong command was accepted")) {
+        return 1;
+    }
+    protocol::Frame matchingCommandResponse = wrongCommandResponse;
+    matchingCommandResponse.command =
+        static_cast<quint8>(protocol::Command::GetStatus);
+    matchingCommandResponse.payload = QByteArray("matching-command");
+    client.ingestBytes(QByteArrayView(encodeFrame(matchingCommandResponse)));
+    if (!require(responseCount == responseCountBeforeWrongCommand + 1,
+                 "a response with a matching command was not accepted")) {
+        return 1;
+    }
+
     const quint8 errorSequence = client.sendRequest(
         protocol::Command::GetStatus, QByteArray("error-request"));
     const QVector<protocol::Frame> errorRequests =
@@ -85,7 +116,8 @@ int main(int argc, char **argv) {
     errorResponse.flags = protocol::Error;
     errorResponse.payload = QByteArray("error-response");
     client.ingestBytes(QByteArrayView(encodeFrame(errorResponse)));
-    if (!require(responseCount == 2 && failureCount == 0,
+    if (!require(responseCount == responseCountBeforeWrongCommand + 2 &&
+                     failureCount == 0,
                  "an error response did not match the pending request")) {
         return 1;
     }

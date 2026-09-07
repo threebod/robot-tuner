@@ -45,3 +45,35 @@ ctest --test-dir build-task5-green -C Debug --output-on-failure       6/6 PASS
 ```
 
 工作树中已有的 `build/` 及本次验证用 `build-task5-*` 均为未跟踪构建产物，未加入提交。
+
+## 修复第 1 轮：审查回归
+
+### RED
+
+新增回归断言后，在原实现上运行：
+
+```text
+ctest --test-dir build-task5-green -C Debug -R "test_protocol_client|test_device_client" --output-on-failure
+```
+
+按预期失败：
+
+```text
+a response with a matching sequence but wrong command was accepted
+SET_PARAM_GROUP was allowed before HELLO
+0% tests passed, 2 tests failed out of 2
+```
+
+### GREEN
+
+- `ProtocolClient` 现在同时匹配 response 的 sequence 和 command；错误 command 保留 pending，不会误分派。
+- 参数读回逐项检查 ID、组、wire type 和目录范围；结构化 typed value 截断报告 `0x04 LENGTH`。
+- IMU 只接受 22 字节（timestamp + 9 个 `int16`），`STATUS_TELEMETRY` 只接受 5 字节。
+- 未握手时拒绝参数写入、遥测订阅和 IMU 校准；HELLO 错误、超时和断开清除握手状态。
+
+修复后定向测试 2/2 通过，全量 CTest 6/6 通过：
+
+```text
+ctest --test-dir build-task5-green -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 6
+```
