@@ -148,8 +148,10 @@ void MechanismPage::setValues(const QVector<ParameterValue> &values) {
         values_.insert(value.id, value);
         receivedMechanismValues = true;
     }
-    const bool isWriteResponse = pendingWriteGroups_.contains(kMechanismGroup);
-    if (receivedMechanismValues && !isWriteResponse &&
+    const bool isReadResponse =
+        connected_ && pendingReadGroups_.contains(kMechanismGroup) &&
+        !pendingWriteGroups_.contains(kMechanismGroup);
+    if (receivedMechanismValues && isReadResponse &&
         !connectionInitialGroups_.contains(kMechanismGroup)) {
         for (const ParameterValue &value : values) {
             const ParameterSpec *spec = catalog_.find(value.id);
@@ -161,8 +163,10 @@ void MechanismPage::setValues(const QVector<ParameterValue> &values) {
         connectionInitialGroups_.insert(kMechanismGroup);
     }
     if (receivedMechanismValues) {
-        pendingReadGroups_.remove(kMechanismGroup);
         pendingWriteGroups_.remove(kMechanismGroup);
+        if (isReadResponse) {
+            pendingReadGroups_.remove(kMechanismGroup);
+        }
     }
 
     for (const auto &[id, control] : controls_.asKeyValueRange()) {

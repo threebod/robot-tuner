@@ -243,22 +243,23 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
     }
 
     for (quint8 group : groupsInCall) {
-        const bool isWriteResponse = pendingWriteGroups_.contains(group);
-        if (connectionInitialGroups_.contains(group) || isWriteResponse) {
-            pendingReadGroups_.remove(group);
-            pendingWriteGroups_.remove(group);
-            continue;
-        }
-        for (const ParameterValue &value : values) {
-            const ParameterSpec *spec = catalog_.find(value.id);
-            if (spec != nullptr && spec->group == group && ownsGroup(group) &&
-                spec->type == value.type) {
-                connectionInitialValues_.insert(value.id, value);
+        const bool isReadResponse =
+            connected_ && pendingReadGroups_.contains(group) &&
+            !pendingWriteGroups_.contains(group);
+        if (isReadResponse && !connectionInitialGroups_.contains(group)) {
+            for (const ParameterValue &value : values) {
+                const ParameterSpec *spec = catalog_.find(value.id);
+                if (spec != nullptr && spec->group == group &&
+                    ownsGroup(group) && spec->type == value.type) {
+                    connectionInitialValues_.insert(value.id, value);
+                }
             }
+            connectionInitialGroups_.insert(group);
         }
-        connectionInitialGroups_.insert(group);
-        pendingReadGroups_.remove(group);
         pendingWriteGroups_.remove(group);
+        if (isReadResponse) {
+            pendingReadGroups_.remove(group);
+        }
     }
 
     for (const auto &[id, control] : controls_.asKeyValueRange()) {

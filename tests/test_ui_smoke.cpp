@@ -107,6 +107,26 @@ int main(int argc, char **argv) {
         return 1;
     }
     chassis.setValues({
+        {0x2000, ValueType::Int32, QVariant(qint32(12))},
+        {0x2001, ValueType::Int32, QVariant(qint32(-4))},
+        {0x2002, ValueType::Int32, QVariant(qint32(7))},
+        {0x2003, ValueType::UInt16, QVariant(quint16(250))},
+        {0x2004, ValueType::UInt16, QVariant(quint16(15))},
+    });
+    if (!require(!restore->isEnabled(),
+                 "an unsolicited chassis response created connection initial values")) {
+        return 1;
+    }
+    chassis.setConnected(false);
+    chassis.setValues({
+        {0x2000, ValueType::Int32, QVariant(qint32(12))},
+    });
+    if (!require(!restore->isEnabled(),
+                 "a disconnected late chassis response created connection initial values")) {
+        return 1;
+    }
+    chassis.setConnected(true);
+    chassis.setValues({
         {0x1000, ValueType::Float32, QVariant(1.5)},
         {0x1001, ValueType::Float32, QVariant(0.25)},
         {0x1002, ValueType::Float32, QVariant(0.5)},
@@ -179,9 +199,36 @@ int main(int argc, char **argv) {
         mechanism.findChild<QLabel *>("horizontalPositionSpinBoxUnit");
     auto *mechanismPageWrite =
         mechanism.findChild<QPushButton *>("mechanismWriteButton");
+    auto *mechanismRead =
+        mechanism.findChild<QPushButton *>("mechanismReadButton");
+    auto *mechanismRestore =
+        mechanism.findChild<QPushButton *>("mechanismRestoreInitialButton");
     if (!require(horizontalUnit && horizontalUnit->text() == QStringLiteral("mm") &&
-                     mechanismPageWrite && !mechanismPageWrite->isEnabled(),
+                     mechanismPageWrite && !mechanismPageWrite->isEnabled() &&
+                     mechanismRead && mechanismRestore,
                  "mechanism units or handshake lock are missing")) {
+        return 1;
+    }
+    mechanism.setConnected(true);
+    const QVector<ParameterValue> mechanismValues = {
+        {0x3000, ValueType::Float32, QVariant(10.0)},
+    };
+    mechanism.setValues(mechanismValues);
+    if (!require(!mechanismRestore->isEnabled(),
+                 "an unsolicited mechanism response created connection initial values")) {
+        return 1;
+    }
+    mechanism.setConnected(false);
+    mechanism.setValues(mechanismValues);
+    if (!require(!mechanismRestore->isEnabled(),
+                 "a disconnected late mechanism response created connection initial values")) {
+        return 1;
+    }
+    mechanism.setConnected(true);
+    mechanismRead->click();
+    mechanism.setValues(mechanismValues);
+    if (!require(mechanismRestore->isEnabled(),
+                 "a requested mechanism read did not create connection initial values")) {
         return 1;
     }
     return 0;

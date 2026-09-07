@@ -29,6 +29,8 @@ exit=1
 
 补充回归测试先验证了一个边界：在未发生读取时，首次写入响应不能被保存为连接初值；修复前 smoke 输出 `a write response was incorrectly treated as connection initial values`，修复后通过。页面按待读/写请求区分回读，连接断开会清空快照。
 
+本轮修复进一步将快照门控收紧为：页面已连接、该组存在待读请求、且没有待处理写请求时才允许捕获；外部调用、写响应和断开后的迟到回包只更新当前控件，不建立连接初值。修复前回归测试输出 `an unsolicited chassis response created connection initial values`，修复后通过。
+
 ## 验证
 
 使用已有 `E:\Qt\6.11.1\mingw_64` Qt 6.11.1、CMake、Ninja 和 MinGW 13.1.0；仅将已有工具链 `bin` 临时加入当前进程 `PATH`，未安装依赖。
