@@ -3,7 +3,7 @@
 #include "protocol/Crc16.h"
 
 QByteArray encodeFrame(const protocol::Frame &frame) {
-    if (frame.payload.size() > 128) {
+    if (frame.version != 1 || frame.payload.size() > 128) {
         return {};
     }
 

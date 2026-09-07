@@ -68,6 +68,18 @@ int main() {
         return 1;
     }
 
+    frame.version = 0;
+    if (!require(encodeFrame(frame).isEmpty(),
+                 "version 0 frame was not rejected")) {
+        return 1;
+    }
+    frame.version = 2;
+    if (!require(encodeFrame(frame).isEmpty(),
+                 "version 2 frame was not rejected")) {
+        return 1;
+    }
+    frame.version = 1;
+
     frame.payload = QByteArray(128, '\xA5');
     const QByteArray maxEncoded = encodeFrame(frame);
     if (!require(maxEncoded.size() == 10 + 128,
