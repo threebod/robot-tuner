@@ -22,6 +22,7 @@ public:
 
     void setConnected(bool connected);
     void setValues(const QVector<ParameterValue> &values);
+    void clearPendingRead(quint8 group, QString reason);
 
 signals:
     void readRequested(quint8 group);

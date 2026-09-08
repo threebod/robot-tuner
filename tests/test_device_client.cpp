@@ -102,6 +102,17 @@ void feedResponse(ProtocolClient *protocol, const QByteArray &requestBytes,
     protocol->ingestBytes(QByteArrayView(encodeFrame(response)));
 }
 
+void emitResponse(ProtocolClient *protocol, const QByteArray &requestBytes,
+                  protocol::Command command, const QByteArray &payload,
+                  quint8 sequence, quint8 flags = protocol::Response) {
+    protocol::Frame response = capturedFrame(requestBytes);
+    response.flags = flags;
+    response.sequence = sequence;
+    response.command = static_cast<quint8>(command);
+    response.payload = payload;
+    protocol->responseReceived(response);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -240,6 +251,276 @@ int main(int argc, char **argv) {
                  "an incomplete PID page was emitted as a complete group") ||
         !require(incompletePidErrors == 1,
                  "an incomplete PID page did not report an error")) {
+        return 1;
+    }
+
+    ProtocolClient interleavedProtocol;
+    DeviceClient interleavedDevice(&interleavedProtocol);
+    QByteArray interleavedRequest;
+    int interleavedPidCount = 0;
+    int interleavedReadFailures = 0;
+    QObject::connect(&interleavedProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { interleavedRequest = bytes; });
+    QObject::connect(&interleavedDevice, &DeviceClient::parameterGroupReceived,
+                     [&](quint8 group, const QVector<ParameterValue> &) {
+                         if (group == 0x10) {
+                             ++interleavedPidCount;
+                         }
+                     });
+    QObject::connect(&interleavedDevice, &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++interleavedReadFailures;
+                         }
+                     });
+    if (!require(interleavedDevice.getParameterGroup(0x10),
+                 "interleaved PID parameter group request was not sent")) {
+        return 1;
+    }
+    const QByteArray interleavedPidPage0 = interleavedRequest;
+    if (!require(interleavedDevice.getParameterGroup(0x20),
+                 "unrelated parameter group request was not sent")) {
+        return 1;
+    }
+    const QByteArray interleavedOtherRequest = interleavedRequest;
+    feedResponse(&interleavedProtocol, interleavedOtherRequest,
+                 protocol::Command::GetParamGroup, QByteArray::fromHex("08"),
+                 protocol::Response | protocol::Error);
+    if (!require(interleavedReadFailures == 0,
+                 "an unrelated parameter-group error cleared PID pagination")) {
+        return 1;
+    }
+    feedResponse(&interleavedProtocol, interleavedPidPage0,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18));
+    if (!require(capturedFrame(interleavedRequest).payload ==
+                     QByteArray::fromHex("10 01"),
+                 "PID page zero did not continue after an unrelated error")) {
+        return 1;
+    }
+    const QByteArray interleavedPidPage1 = interleavedRequest;
+    feedResponse(&interleavedProtocol, interleavedPidPage1,
+                 protocol::Command::GetParamGroup, pidPagePayload(18, 7));
+    if (!require(interleavedPidCount == 1 && interleavedReadFailures == 0,
+                 "unrelated parameter-group error corrupted PID aggregation")) {
+        return 1;
+    }
+
+    ProtocolClient failedOtherProtocol;
+    DeviceClient failedOtherDevice(&failedOtherProtocol);
+    QByteArray failedOtherRequest;
+    int failedOtherReadFailures = 0;
+    QObject::connect(&failedOtherProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { failedOtherRequest = bytes; });
+    QObject::connect(&failedOtherDevice,
+                     &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++failedOtherReadFailures;
+                         }
+                     });
+    if (!require(failedOtherDevice.getParameterGroup(0x10),
+                 "PID request for unrelated-failure test was not sent")) {
+        return 1;
+    }
+    const QByteArray failedOtherPidPage0 = failedOtherRequest;
+    if (!require(failedOtherDevice.getParameterGroup(0x20),
+                 "second unrelated parameter group request was not sent")) {
+        return 1;
+    }
+    const quint8 failedOtherSequence =
+        capturedFrame(failedOtherRequest).sequence;
+    failedOtherProtocol.requestFailed(failedOtherSequence,
+                                       QStringLiteral("请求超时"));
+    if (!require(failedOtherReadFailures == 0,
+                 "an unrelated request failure cleared PID pagination")) {
+        return 1;
+    }
+    feedResponse(&failedOtherProtocol, failedOtherPidPage0,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18));
+    if (!require(capturedFrame(failedOtherRequest).payload ==
+                     QByteArray::fromHex("10 01"),
+                 "PID page zero did not continue after an unrelated failure")) {
+        return 1;
+    }
+
+    ProtocolClient stalePidProtocol;
+    DeviceClient stalePidDevice(&stalePidProtocol);
+    QByteArray stalePidRequest;
+    int stalePidCount = 0;
+    QVector<ParameterValue> stalePidValues;
+    int staleReadFailures = 0;
+    QObject::connect(&stalePidProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { stalePidRequest = bytes; });
+    QObject::connect(&stalePidDevice, &DeviceClient::parameterGroupReceived,
+                     [&](quint8 group, const QVector<ParameterValue> &values) {
+                         if (group == 0x10) {
+                             ++stalePidCount;
+                             stalePidValues = values;
+                         }
+                     });
+    QObject::connect(&stalePidDevice, &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++staleReadFailures;
+                         }
+                     });
+    if (!require(stalePidDevice.getParameterGroup(0x10),
+                 "stale-response PID request was not sent")) {
+        return 1;
+    }
+    const QByteArray stalePage0Request = stalePidRequest;
+    const quint8 stalePage0Sequence = capturedFrame(stalePage0Request).sequence;
+    feedResponse(&stalePidProtocol, stalePage0Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18));
+    const QByteArray stalePage1Request = stalePidRequest;
+    emitResponse(&stalePidProtocol, stalePage0Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18),
+                 stalePage0Sequence);
+    if (!require(stalePidCount == 0 && staleReadFailures == 0,
+                 "a stale PID page response changed current pagination")) {
+        return 1;
+    }
+    if (!require(capturedFrame(stalePidRequest).payload ==
+                     QByteArray::fromHex("10 01"),
+                 "a stale PID page response replaced the page-one request")) {
+        return 1;
+    }
+    feedResponse(&stalePidProtocol, stalePage1Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(18, 7));
+    if (!require(stalePidCount == 1 && stalePidValues.size() == 25 &&
+                     staleReadFailures == 0,
+                 "valid PID page one was lost after a stale response")) {
+        return 1;
+    }
+
+    ProtocolClient malformedProtocol;
+    DeviceClient malformedDevice(&malformedProtocol);
+    QByteArray malformedRequest;
+    int malformedPidCount = 0;
+    int malformedReadFailures = 0;
+    QObject::connect(&malformedProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { malformedRequest = bytes; });
+    QObject::connect(&malformedDevice,
+                     &DeviceClient::parameterGroupReceived,
+                     [&](quint8 group, const QVector<ParameterValue> &) {
+                         if (group == 0x10) {
+                             ++malformedPidCount;
+                         }
+                     });
+    QObject::connect(&malformedDevice, &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++malformedReadFailures;
+                         }
+                     });
+    if (!require(malformedDevice.getParameterGroup(0x10),
+                 "malformed PID request was not sent")) {
+        return 1;
+    }
+    const QByteArray malformedPage0Request = malformedRequest;
+    feedResponse(&malformedProtocol, malformedPage0Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18));
+    const QByteArray malformedPage1Request = malformedRequest;
+    feedResponse(&malformedProtocol, malformedPage1Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(19, 7));
+    if (!require(malformedPidCount == 0 && malformedReadFailures == 1,
+                 "out-of-order PID page one was accepted") ||
+        !require(malformedDevice.getParameterGroup(0x10),
+                 "PID pagination could not be retried after page-order error") ||
+        !require(capturedFrame(malformedRequest).payload ==
+                     QByteArray::fromHex("10"),
+                 "retry after page-order error did not request page zero")) {
+        return 1;
+    }
+    const QByteArray retryPage0Request = malformedRequest;
+    feedResponse(&malformedProtocol, retryPage0Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 18));
+    const QByteArray retryPage1Request = malformedRequest;
+    feedResponse(&malformedProtocol, retryPage1Request,
+                 protocol::Command::GetParamGroup, pidPagePayload(18, 6));
+    if (!require(malformedPidCount == 0 && malformedReadFailures == 2,
+                 "wrong-count PID page one was accepted") ||
+        !require(malformedDevice.getParameterGroup(0x10),
+                 "PID pagination could not be retried after page-count error")) {
+        return 1;
+    }
+
+    ProtocolClient disconnectedProtocol;
+    DeviceClient disconnectedDevice(&disconnectedProtocol);
+    QByteArray disconnectedRequest;
+    int disconnectedReadFailures = 0;
+    QObject::connect(&disconnectedProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { disconnectedRequest = bytes; });
+    QObject::connect(&disconnectedDevice,
+                     &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++disconnectedReadFailures;
+                         }
+                     });
+    if (!require(disconnectedDevice.getParameterGroup(0x10),
+                 "disconnect PID request was not sent")) {
+        return 1;
+    }
+    disconnectedProtocol.clearPending();
+    if (!require(disconnectedReadFailures == 1,
+                 "disconnect did not notify the PID page read failure")) {
+        return 1;
+    }
+
+    ProtocolClient failedPidProtocol;
+    DeviceClient failedPidDevice(&failedPidProtocol);
+    QByteArray failedPidRequest;
+    int failedPidReadFailures = 0;
+    QObject::connect(&failedPidProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { failedPidRequest = bytes; });
+    QObject::connect(&failedPidDevice, &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++failedPidReadFailures;
+                         }
+                     });
+    if (!require(failedPidDevice.getParameterGroup(0x10),
+                 "PID request-failure test request was not sent")) {
+        return 1;
+    }
+    failedPidProtocol.requestFailed(capturedFrame(failedPidRequest).sequence,
+                                    QStringLiteral("请求超时"));
+    if (!require(failedPidReadFailures == 1,
+                 "PID request failure did not notify the page")) {
+        return 1;
+    }
+    if (!require(failedPidDevice.getParameterGroup(0x10),
+                 "PID pagination could not be retried after request failure") ||
+        !require(capturedFrame(failedPidRequest).payload ==
+                     QByteArray::fromHex("10"),
+                 "PID request-failure retry did not request page zero")) {
+        return 1;
+    }
+
+    ProtocolClient errorPidProtocol;
+    DeviceClient errorPidDevice(&errorPidProtocol);
+    QByteArray errorPidRequest;
+    int errorPidReadFailures = 0;
+    QObject::connect(&errorPidProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { errorPidRequest = bytes; });
+    QObject::connect(&errorPidDevice, &DeviceClient::parameterGroupReadFailed,
+                     [&](quint8 group, const QString &) {
+                         if (group == 0x10) {
+                             ++errorPidReadFailures;
+                         }
+                     });
+    if (!require(errorPidDevice.getParameterGroup(0x10),
+                 "PID error-response test request was not sent")) {
+        return 1;
+    }
+    feedResponse(&errorPidProtocol, errorPidRequest,
+                 protocol::Command::GetParamGroup, QByteArray::fromHex("08"),
+                 protocol::Response | protocol::Error);
+    if (!require(errorPidReadFailures == 1,
+                 "PID error response did not notify the page") ||
+        !require(errorPidDevice.getParameterGroup(0x10),
+                 "PID pagination could not be retried after error response")) {
         return 1;
     }
 

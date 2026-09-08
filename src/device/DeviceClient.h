@@ -49,6 +49,7 @@ public:
 signals:
     void handshakeCompleted(DeviceInfo info);
     void parameterGroupReceived(quint8 group, QVector<ParameterValue> values);
+    void parameterGroupReadFailed(quint8 group, QString reason);
     void imuSampleReceived(ImuSample sample);
     void pidSampleReceived(PidSample sample);
     void statusReceived(DeviceStatus status);
@@ -67,12 +68,14 @@ private slots:
 
 private:
     bool send(protocol::Command command, const QByteArray &payload);
+    bool sendPidPage(quint8 page);
     bool reject(const QString &message, quint8 code);
     void reportError(quint8 code, const QString &detail);
+    void failParameterGroupRead(const QString &reason);
 
     void decodeHello(const QByteArray &payload);
     void decodeParameterGroup(const QByteArray &payload,
-                              protocol::Command command);
+                              protocol::Command command, quint8 sequence);
     void resetParameterGroupRead();
     void decodeImu(const QByteArray &payload);
     void decodePid(const QByteArray &payload);
@@ -105,6 +108,7 @@ private:
     quint64 clearEmergencyStopGeneration_{};
     bool pidGroupReadPending_{};
     quint8 pidGroupPendingPage_{};
+    quint8 pidGroupPageSequence_{};
     QVector<ParameterValue> pidGroupValues_;
     bool testsUnlocked_{};
     bool emergencyLocked_{};

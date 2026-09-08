@@ -252,6 +252,8 @@ MainWindow::MainWindow(QWidget *parent)
             &DeviceClient::setParameterGroup);
     connect(&device_, &DeviceClient::parameterGroupReceived, this,
             &MainWindow::handleParameterGroup);
+    connect(&device_, &DeviceClient::parameterGroupReadFailed, chassisPage_,
+            &ChassisPage::clearPendingRead);
     connect(imuPage_, &ImuPage::telemetryRateChanged, this,
             &MainWindow::handleTelemetryRateChanged);
     connect(imuPage_, &ImuPage::calibrationRequested, this,

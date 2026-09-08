@@ -243,14 +243,12 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
     }
 
     QSet<quint8> completedGroups;
-    bool incompletePidRead = false;
     for (quint8 group : groupsInCall) {
         const bool isReadResponse =
             connected_ && pendingReadGroups_.contains(group) &&
             !pendingWriteGroups_.contains(group);
         if (isReadResponse && group == kPidGroup &&
             !hasCompleteGroup(group)) {
-            incompletePidRead = true;
             continue;
         }
         if (isReadResponse && !connectionInitialGroups_.contains(group)) {
@@ -275,6 +273,9 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
             applyValue(*it);
         }
     }
+    const bool incompletePidRead =
+        pendingReadGroups_.contains(kPidGroup) &&
+        !hasCompleteGroup(kPidGroup);
     if (!incompletePidRead) {
         refreshPidControls();
     }
@@ -282,6 +283,20 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
     if (!completedGroups.isEmpty()) {
         setStatus(QStringLiteral("已读取设备 RAM 参数"));
     }
+}
+
+void ChassisPage::clearPendingRead(quint8 group, QString reason) {
+    pendingReadGroups_.remove(group);
+    if (group == kPidGroup) {
+        for (const ParameterSpec &spec : catalog_.group(group)) {
+            values_.remove(spec.id);
+        }
+        refreshPidControls();
+    }
+    refreshRestoreButton();
+    setStatus(reason.isEmpty()
+                  ? QStringLiteral("参数读取失败，可重试")
+                  : QStringLiteral("%1，可重试").arg(reason));
 }
 
 void ChassisPage::handlePidProfileChanged(int) {

@@ -249,9 +249,8 @@ bool DeviceClient::getParameterGroup(quint8 group) {
         pidGroupReadPending_ = true;
         pidGroupPendingPage_ = 0;
         pidGroupValues_.clear();
-        if (!send(protocol::Command::GetParamGroup,
-                  QByteArray(1, static_cast<char>(group)))) {
-            resetParameterGroupRead();
+        if (!sendPidPage(0)) {
+            failParameterGroupRead(QStringLiteral("PID 参数读取请求失败"));
             return false;
         }
         return true;
@@ -531,6 +530,20 @@ bool DeviceClient::send(protocol::Command command, const QByteArray &payload) {
     return true;
 }
 
+bool DeviceClient::sendPidPage(quint8 page) {
+    if (protocol_ == nullptr) {
+        return reject(QStringLiteral("协议客户端为空"), 0x02);
+    }
+    QByteArray payload;
+    payload.append(static_cast<char>(kPidParameterGroup));
+    if (page != 0) {
+        payload.append(static_cast<char>(page));
+    }
+    pidGroupPageSequence_ =
+        protocol_->sendRequest(protocol::Command::GetParamGroup, payload);
+    return true;
+}
+
 bool DeviceClient::requireActionAccess() {
     refreshUnlockState();
     if (!handshakeComplete_) {
@@ -651,11 +664,14 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
         clearEmergencyStopPending_ = false;
     }
     if ((frame.flags & protocol::Error) != 0) {
-        if (frame.command ==
-            static_cast<quint8>(protocol::Command::GetParamGroup)) {
-            resetParameterGroupRead();
-        }
+        const bool pidReadError =
+            frame.command ==
+                static_cast<quint8>(protocol::Command::GetParamGroup) &&
+            pidGroupReadPending_ && frame.sequence == pidGroupPageSequence_;
         decodeResponseError(frame.payload);
+        if (pidReadError) {
+            failParameterGroupRead(QStringLiteral("PID 参数读取失败"));
+        }
         return;
     }
     switch (static_cast<protocol::Command>(frame.command)) {
@@ -666,10 +682,12 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
         decodeStatusResponse(frame.payload);
         break;
     case protocol::Command::GetParamGroup:
-        decodeParameterGroup(frame.payload, protocol::Command::GetParamGroup);
+        decodeParameterGroup(frame.payload, protocol::Command::GetParamGroup,
+                             frame.sequence);
         break;
     case protocol::Command::SetParamGroup:
-        decodeParameterGroup(frame.payload, protocol::Command::SetParamGroup);
+        decodeParameterGroup(frame.payload, protocol::Command::SetParamGroup,
+                             frame.sequence);
         break;
     case protocol::Command::SetTelemetry:
         decodeTelemetryConfiguration(frame.payload);
@@ -709,7 +727,9 @@ void DeviceClient::handleEvent(protocol::Frame frame) {
 }
 
 void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
-    resetParameterGroupRead();
+    if (pidGroupReadPending_ && sequence == pidGroupPageSequence_) {
+        failParameterGroupRead(reason);
+    }
     if (helloPending_ && sequence == helloSequence_) {
         helloPending_ = false;
         handshakeComplete_ = false;
@@ -729,7 +749,11 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
 void DeviceClient::handleConnectionCleared() {
     handshakeComplete_ = false;
     helloPending_ = false;
-    resetParameterGroupRead();
+    if (pidGroupReadPending_) {
+        failParameterGroupRead(QStringLiteral("连接已断开"));
+    } else {
+        resetParameterGroupRead();
+    }
     failClosed();
 }
 
@@ -760,13 +784,36 @@ void DeviceClient::decodeHello(const QByteArray &payload) {
 void DeviceClient::resetParameterGroupRead() {
     pidGroupReadPending_ = false;
     pidGroupPendingPage_ = 0;
+    pidGroupPageSequence_ = 0;
     pidGroupValues_.clear();
 }
 
+void DeviceClient::failParameterGroupRead(const QString &reason) {
+    if (!pidGroupReadPending_) {
+        return;
+    }
+    resetParameterGroupRead();
+    emit parameterGroupReadFailed(kPidParameterGroup, reason);
+}
+
 void DeviceClient::decodeParameterGroup(const QByteArray &payload,
-                                        protocol::Command command) {
-    const auto fail = [this](quint8 code, const QString &detail) {
-        resetParameterGroupRead();
+                                        protocol::Command command,
+                                        quint8 sequence) {
+    if (command == protocol::Command::GetParamGroup &&
+        pidGroupReadPending_ && payload.size() >= 1 &&
+        static_cast<quint8>(payload.at(0)) == kPidParameterGroup &&
+        sequence != pidGroupPageSequence_) {
+        return;
+    }
+
+    const bool pidPageResponse =
+        command == protocol::Command::GetParamGroup &&
+        pidGroupReadPending_ && sequence == pidGroupPageSequence_;
+    const auto fail = [this, pidPageResponse](quint8 code,
+                                               const QString &detail) {
+        if (pidPageResponse) {
+            failParameterGroupRead(detail);
+        }
         reportError(code, detail);
     };
     if (payload.size() < 2) {
@@ -854,12 +901,8 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload,
             }
             pidGroupValues_ = values;
             pidGroupPendingPage_ = 1;
-            QByteArray pageRequest;
-            pageRequest.append(static_cast<char>(group));
-            pageRequest.append(static_cast<char>(pidGroupPendingPage_));
-            if (!send(protocol::Command::GetParamGroup, pageRequest)) {
-                resetParameterGroupRead();
-                return;
+            if (!sendPidPage(pidGroupPendingPage_)) {
+                failParameterGroupRead(QStringLiteral("PID 参数第 1 页请求失败"));
             }
             return;
         }

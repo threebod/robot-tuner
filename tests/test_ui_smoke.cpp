@@ -350,6 +350,37 @@ int main(int argc, char **argv) {
                  "PID page zero was captured or refreshed prematurely")) {
         return 1;
     }
+    pidAggregationPage.setValues({
+        {0x2000, ValueType::Int32, QVariant(qint32(12))},
+    });
+    if (!require(!pidAggregationRestore->isEnabled() &&
+                     pidAggregationControl->value() == 0.0,
+                 "an unrelated group refreshed an incomplete PID read")) {
+        return 1;
+    }
+    pidAggregationPage.clearPendingRead(0x10, QStringLiteral("分页错误"));
+    if (!require(!pidAggregationRestore->isEnabled(),
+                 "failed PID read left the page initial snapshot enabled")) {
+        return 1;
+    }
+    int retryPidReadCount = 0;
+    QObject::connect(&pidAggregationPage, &ChassisPage::readRequested,
+                     [&](quint8 group) {
+                         if (group == 0x10) {
+                             ++retryPidReadCount;
+                         }
+                     });
+    pidAggregationRead->click();
+    if (!require(retryPidReadCount == 1,
+                 "PID read could not be retried after a pagination error")) {
+        return 1;
+    }
+    pidAggregationPage.setValues(pidPageValues(0, 18));
+    if (!require(!pidAggregationRestore->isEnabled() &&
+                     pidAggregationControl->value() == 0.0,
+                 "PID page zero after retry refreshed prematurely")) {
+        return 1;
+    }
     pidAggregationPage.setValues(pidPageValues(18, 7));
     if (!require(pidAggregationRestore->isEnabled() &&
                      pidAggregationControl->value() == 1.0,
