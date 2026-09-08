@@ -9,6 +9,7 @@ namespace {
 
 constexpr int kImuPayloadWithTimestamp = 4 + 9 * 2;
 constexpr int kPidPayloadSize = 4 + 3 * 2;
+constexpr quint16 kTestUnlockDurationMs = 30000;
 
 enum class TypedDecodeResult {
     Ok,
@@ -212,6 +213,13 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
+    helloPending_ = false;
+    unlockPending_ = false;
+    if (protocol_ != nullptr) {
+        protocol_->cancelPending(protocol::Command::Hello);
+        protocol_->cancelPending(protocol::Command::TestUnlock);
+        protocol_->cancelPending(protocol::Command::TestAction);
+    }
     setTestsUnlocked(false);
     if (protocol_ == nullptr) {
         helloPending_ = false;
@@ -321,7 +329,13 @@ bool DeviceClient::unlockTests() {
     if (emergencyLocked_) {
         return reject(QStringLiteral("设备处于急停状态"), 0x0a);
     }
-    return send(protocol::Command::TestUnlock, {});
+    if (protocol_ == nullptr) {
+        return reject(QStringLiteral("协议客户端为空"), 0x02);
+    }
+    protocol_->cancelPending(protocol::Command::TestUnlock);
+    unlockPending_ = true;
+    unlockSequence_ = protocol_->sendRequest(protocol::Command::TestUnlock, {});
+    return true;
 }
 
 bool DeviceClient::testChassis(qint32 vx, qint32 vy, qint32 w,
@@ -434,6 +448,8 @@ bool DeviceClient::emergencyStop() {
     if (protocol_ == nullptr) {
         return reject(QStringLiteral("协议客户端为空"), 0x02);
     }
+    protocol_->cancelPending(protocol::Command::TestAction);
+    failClosed();
     // Lock locally before emitting bytes so a re-entrant UI or serial
     // callback cannot submit another action while the stop is in flight.
     setEmergencyLocked(true);
@@ -456,7 +472,8 @@ bool DeviceClient::handshakeComplete() const {
 }
 
 bool DeviceClient::testsUnlocked() const {
-    return testsUnlocked_ && unlockElapsed_.isValid() &&
+    return handshakeComplete_ && !emergencyLocked_ && testsUnlocked_ &&
+           unlockElapsed_.isValid() &&
            unlockElapsed_.elapsed() < unlockDurationMs_;
 }
 
@@ -509,17 +526,28 @@ bool DeviceClient::sendTestAction(const QByteArray &payload) {
 }
 
 void DeviceClient::refreshUnlockState() {
-    if (!testsUnlocked_) {
+    if (!handshakeComplete_ || emergencyLocked_ || !testsUnlocked_) {
+        if (testsUnlocked_) {
+            failClosed();
+        }
         if (unlockTimer_.isActive()) {
             unlockTimer_.stop();
         }
         return;
     }
     if (!unlockElapsed_.isValid() || unlockElapsed_.elapsed() >= unlockDurationMs_) {
-        setTestsUnlocked(false);
+        failClosed();
         return;
     }
     emit testUnlockStateChanged(true, unlockRemainingMs());
+}
+
+void DeviceClient::failClosed() {
+    unlockPending_ = false;
+    if (protocol_ != nullptr) {
+        protocol_->cancelPending(protocol::Command::TestUnlock);
+    }
+    setTestsUnlocked(false);
 }
 
 void DeviceClient::setTestsUnlocked(bool unlocked) {
@@ -545,7 +573,7 @@ void DeviceClient::setEmergencyLocked(bool locked) {
     }
     emergencyLocked_ = locked;
     if (locked) {
-        setTestsUnlocked(false);
+        failClosed();
     }
     emit emergencyStateChanged(locked);
 }
@@ -570,6 +598,13 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
         }
         helloPending_ = false;
         handshakeComplete_ = false;
+    }
+    if (frame.command == static_cast<quint8>(protocol::Command::TestUnlock)) {
+        if (!unlockPending_ || frame.sequence != unlockSequence_ ||
+            !handshakeComplete_ || emergencyLocked_) {
+            return;
+        }
+        unlockPending_ = false;
     }
     if ((frame.flags & protocol::Error) != 0) {
         decodeResponseError(frame.payload);
@@ -631,7 +666,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
         handshakeComplete_ = false;
         helloPending_ = false;
     }
-    setTestsUnlocked(false);
+    failClosed();
     if (reason == QStringLiteral("连接已断开")) {
         handshakeComplete_ = false;
         helloPending_ = false;
@@ -643,7 +678,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
 void DeviceClient::handleConnectionCleared() {
     handshakeComplete_ = false;
     helloPending_ = false;
-    setTestsUnlocked(false);
+    failClosed();
 }
 
 void DeviceClient::decodeHello(const QByteArray &payload) {
@@ -804,7 +839,7 @@ void DeviceClient::decodeStatus(const QByteArray &payload) {
         setEmergencyLocked(true);
     }
     if (status.unlocked == 0) {
-        setTestsUnlocked(false);
+        failClosed();
     }
     emit statusReceived(status);
 }
@@ -824,7 +859,7 @@ void DeviceClient::decodeStatusResponse(const QByteArray &payload) {
         setEmergencyLocked(true);
     }
     if (status.unlocked == 0) {
-        setTestsUnlocked(false);
+        failClosed();
     }
     emit statusReceived(status);
 }
@@ -840,11 +875,13 @@ void DeviceClient::decodeTelemetryConfiguration(const QByteArray &payload) {
 
 void DeviceClient::decodeCalibrationState(const QByteArray &payload) {
     if (payload.size() != 1) {
+        failClosed();
         reportError(0x04, QStringLiteral("IMU 校准响应长度错误"));
         return;
     }
     const quint8 state = static_cast<quint8>(payload.at(0));
     if (state > 2) {
+        failClosed();
         reportError(0x04, QStringLiteral("IMU 校准状态无效"));
         return;
     }
@@ -853,12 +890,14 @@ void DeviceClient::decodeCalibrationState(const QByteArray &payload) {
 
 void DeviceClient::decodeTestUnlock(const QByteArray &payload) {
     if (payload.size() != 2) {
+        failClosed();
         reportError(0x04, QStringLiteral("调试解锁响应长度错误"));
         return;
     }
     const quint16 durationMs = readU16(payload, 0);
-    if (durationMs == 0) {
-        reportError(0x07, QStringLiteral("调试解锁时长无效"));
+    if (durationMs != kTestUnlockDurationMs) {
+        failClosed();
+        reportError(0x07, QStringLiteral("调试解锁时长必须为 30000 ms"));
         return;
     }
     unlockDurationMs_ = durationMs;
@@ -868,6 +907,7 @@ void DeviceClient::decodeTestUnlock(const QByteArray &payload) {
 void DeviceClient::decodeEmptyResponse(const QByteArray &payload,
                                        protocol::Command command) {
     if (!payload.isEmpty()) {
+        failClosed();
         reportError(0x04, QStringLiteral("安全动作响应长度错误"));
         return;
     }
@@ -885,13 +925,15 @@ void DeviceClient::decodeEmptyResponse(const QByteArray &payload,
 
 void DeviceClient::decodeResponseError(const QByteArray &payload) {
     if (payload.isEmpty()) {
+        failClosed();
         reportError(0x04, QStringLiteral("错误响应缺少错误码"));
         return;
     }
     const quint8 code = static_cast<quint8>(payload.at(0));
-    if (code == 0x09) {
-        setTestsUnlocked(false);
-    } else if (code == 0x0a) {
+    // A remote error is a safety boundary even when it was not specifically
+    // reported as an unlock or emergency error.
+    failClosed();
+    if (code == 0x0a) {
         setEmergencyLocked(true);
     }
     reportError(code, errorText(code));

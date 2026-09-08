@@ -720,5 +720,178 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // A delayed unlock response must not survive a newer HELLO transaction.
+    ProtocolClient raceProtocol(100);
+    DeviceClient raceDevice(&raceProtocol);
+    QVector<QByteArray> raceRequests;
+    QObject::connect(&raceProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { raceRequests.push_back(bytes); });
+    raceDevice.hello();
+    const QByteArray raceHelloRequest = raceRequests.back();
+    feedResponse(&raceProtocol, raceHelloRequest, protocol::Command::Hello,
+                 helloPayload);
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray staleUnlockRequest = raceRequests.back();
+    raceDevice.hello();
+    const QByteArray latestHelloRequest = raceRequests.back();
+    feedResponse(&raceProtocol, latestHelloRequest, protocol::Command::Hello,
+                 helloPayload);
+    protocol::Frame staleUnlockResponse = capturedFrame(staleUnlockRequest);
+    staleUnlockResponse.flags = protocol::Response;
+    staleUnlockResponse.payload = QByteArray::fromHex("30 75");
+    raceProtocol.ingestBytes(QByteArrayView(encodeFrame(staleUnlockResponse)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled(),
+                 "a delayed TEST_UNLOCK ACK re-enabled actions after HELLO")) {
+        return 1;
+    }
+
+    // The unlock contract is fixed at 30 seconds; other durations are a
+    // protocol error and must fail closed.
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray invalidDurationRequest = raceRequests.back();
+    protocol::Frame invalidDurationResponse =
+        capturedFrame(invalidDurationRequest);
+    invalidDurationResponse.flags = protocol::Response;
+    invalidDurationResponse.payload = QByteArray::fromHex("31 75");
+    raceProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(invalidDurationResponse)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled(),
+                 "TEST_UNLOCK accepted a duration other than 30000 ms")) {
+        return 1;
+    }
+
+    // Emergency stop invalidates a pending unlock and prevents its delayed
+    // ACK from changing the local safety state.
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray emergencyStaleUnlock = raceRequests.front();
+    if (!require(raceDevice.emergencyStop(),
+                 "emergency stop failed while an unlock was pending")) {
+        return 1;
+    }
+    protocol::Frame emergencyStaleResponse = capturedFrame(emergencyStaleUnlock);
+    emergencyStaleResponse.flags = protocol::Response;
+    emergencyStaleResponse.payload = QByteArray::fromHex("30 75");
+    raceProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(emergencyStaleResponse)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled() &&
+                     raceDevice.emergencyLocked(),
+                 "a delayed TEST_UNLOCK ACK re-enabled actions after emergency stop")) {
+        return 1;
+    }
+    raceProtocol.clearPending();
+
+    // Any device error, including BUSY, clears an otherwise valid unlock.
+    raceDevice.hello();
+    const QByteArray errorHelloRequest = raceRequests.back();
+    feedResponse(&raceProtocol, errorHelloRequest, protocol::Command::Hello,
+                 helloPayload);
+    raceDevice.clearEmergencyStop();
+    const QByteArray errorClearRequest = raceRequests.back();
+    feedResponse(&raceProtocol, errorClearRequest,
+                 protocol::Command::ClearEmergencyStop, {});
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray errorUnlockRequest = raceRequests.back();
+    feedResponse(&raceProtocol, errorUnlockRequest,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    if (!require(raceDevice.testsUnlocked(),
+                 "valid TEST_UNLOCK did not enable error fail-closed scenario")) {
+        return 1;
+    }
+    raceRequests.clear();
+    raceDevice.testChassis(0, 0, 0, 100);
+    const QByteArray busyActionRequest = raceRequests.back();
+    protocol::Frame busyResponse = capturedFrame(busyActionRequest);
+    busyResponse.flags = protocol::Error;
+    busyResponse.payload = QByteArray(1, char(0x08));
+    raceProtocol.ingestBytes(QByteArrayView(encodeFrame(busyResponse)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled(),
+                 "BUSY error left test actions unlocked")) {
+        return 1;
+    }
+
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray rangeUnlockRequest = raceRequests.back();
+    feedResponse(&raceProtocol, rangeUnlockRequest,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    raceRequests.clear();
+    raceDevice.testChassis(0, 0, 0, 100);
+    const QByteArray rangeActionRequest = raceRequests.back();
+    protocol::Frame rangeResponse = capturedFrame(rangeActionRequest);
+    rangeResponse.flags = protocol::Error;
+    rangeResponse.payload = QByteArray(1, char(0x07));
+    raceProtocol.ingestBytes(QByteArrayView(encodeFrame(rangeResponse)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled(),
+                 "range error left test actions unlocked")) {
+        return 1;
+    }
+
+    // A malformed success ACK is also an error boundary and must fail closed.
+    raceRequests.clear();
+    raceDevice.unlockTests();
+    const QByteArray malformedUnlockRequest = raceRequests.back();
+    feedResponse(&raceProtocol, malformedUnlockRequest,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    raceRequests.clear();
+    raceDevice.testChassis(0, 0, 0, 100);
+    const QByteArray malformedActionRequest = raceRequests.back();
+    feedResponse(&raceProtocol, malformedActionRequest,
+                 protocol::Command::TestAction, QByteArray(1, char(0x01)));
+    if (!require(!raceDevice.testsUnlocked() &&
+                     !raceDevice.testActionsEnabled(),
+                 "malformed action ACK left test actions unlocked")) {
+        return 1;
+    }
+
+    // Emergency stop must cancel pending action retries before transmitting
+    // STOP/EMERGENCY_STOP itself.
+    ProtocolClient emergencyProtocol(5);
+    DeviceClient emergencyDevice(&emergencyProtocol);
+    QVector<QByteArray> emergencyRequests;
+    int testActionFrameCount = 0;
+    QObject::connect(&emergencyProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         emergencyRequests.push_back(bytes);
+                         if (capturedFrame(bytes).command == static_cast<quint8>(
+                                 protocol::Command::TestAction)) {
+                             ++testActionFrameCount;
+                         }
+                     });
+    emergencyDevice.hello();
+    const QByteArray emergencyHello = emergencyRequests.front();
+    feedResponse(&emergencyProtocol, emergencyHello, protocol::Command::Hello,
+                 helloPayload);
+    emergencyRequests.clear();
+    emergencyDevice.unlockTests();
+    const QByteArray emergencyUnlock = emergencyRequests.back();
+    feedResponse(&emergencyProtocol, emergencyUnlock,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    emergencyRequests.clear();
+    emergencyDevice.testChassis(0, 0, 0, 100);
+    if (!require(testActionFrameCount == 1,
+                 "test action request was not sent before emergency stop")) {
+        return 1;
+    }
+    emergencyDevice.emergencyStop();
+    QElapsedTimer emergencyWait;
+    emergencyWait.start();
+    while (emergencyWait.elapsed() < 35) {
+        QCoreApplication::processEvents();
+        QThread::msleep(2);
+    }
+    if (!require(testActionFrameCount == 1,
+                 "pending test action was retried after emergency stop")) {
+        return 1;
+    }
+
     return 0;
 }

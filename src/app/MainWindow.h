@@ -16,6 +16,8 @@ class MechanismPage;
 class OverviewPage;
 class ImuPage;
 class ActionTestPage;
+class TerminalPage;
+class VisionPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -57,5 +59,7 @@ private:
     ImuPage *imuPage_{};
     MechanismPage *mechanismPage_{};
     ActionTestPage *actionPage_{};
+    TerminalPage *terminalPage_{};
+    VisionPage *visionPage_{};
     bool serialConnected_{};
 };

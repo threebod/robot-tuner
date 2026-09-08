@@ -81,6 +81,20 @@ void ProtocolClient::ingestBytes(QByteArrayView bytes) {
     }
 }
 
+void ProtocolClient::cancelPending(protocol::Command command) {
+    const quint8 commandValue = static_cast<quint8>(command);
+    for (auto pending = pending_.begin(); pending != pending_.end();) {
+        if (pending->frame.command == commandValue) {
+            pending = pending_.erase(pending);
+        } else {
+            ++pending;
+        }
+    }
+    if (pending_.isEmpty()) {
+        deadlineTimer_.stop();
+    }
+}
+
 void ProtocolClient::clearPending() {
     struct Failure {
         quint8 sequence;

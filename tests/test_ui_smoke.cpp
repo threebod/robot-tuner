@@ -5,6 +5,8 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QListWidget>
+#include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QWidget>
@@ -19,6 +21,8 @@
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/OverviewPage.h"
+#include "pages/TerminalPage.h"
+#include "pages/VisionPage.h"
 #include "protocol/FrameCodec.h"
 #include "protocol/FrameParser.h"
 #include "widgets/TelemetryPlot.h"
@@ -59,6 +63,29 @@ int main(int argc, char **argv) {
     auto *actionPage = window.findChild<QWidget *>("动作测试");
     auto *actionUnlock = window.findChild<QPushButton *>("testUnlockButton");
     auto *actionChassis = window.findChild<QPushButton *>("testChassisButton");
+    auto *actionChassisVx =
+        window.findChild<QSpinBox *>("testChassisVxSpinBox");
+    auto *actionHorizontalTarget =
+        window.findChild<QDoubleSpinBox *>("testHorizontalTargetSpinBox");
+    auto *terminalPage = window.findChild<TerminalPage *>();
+    auto *terminalMode =
+        window.findChild<QComboBox *>("terminalDisplayModeCombo");
+    auto *terminalLog =
+        window.findChild<QPlainTextEdit *>("terminalLogTextEdit");
+    auto *terminalInput =
+        window.findChild<QLineEdit *>("terminalInputLineEdit");
+    auto *terminalSend =
+        window.findChild<QPushButton *>("terminalSendButton");
+    auto *terminalClear =
+        window.findChild<QPushButton *>("terminalClearButton");
+    auto *terminalPause =
+        window.findChild<QPushButton *>("terminalPauseButton");
+    auto *terminalNotice =
+        window.findChild<QLabel *>("terminalBypassNotice");
+    auto *visionPage = window.findChild<QWidget *>("视觉（预留）");
+    auto *visionPlaceholder =
+        window.findChild<QLabel *>("visionPlaceholderLabel");
+    auto *visionUsart1 = window.findChild<QLabel *>("visionUsart1Label");
     auto *pidProfile = window.findChild<QComboBox *>("pidProfileCombo");
     auto *pidKp = window.findChild<QDoubleSpinBox *>("pidKpSpinBox");
     auto *pidWrite = window.findChild<QPushButton *>("pidWriteButton");
@@ -89,8 +116,21 @@ int main(int argc, char **argv) {
         !require(actionPage && !actionPage->isEnabled(),
                  "action page must stay disabled before handshake") ||
         !require(actionUnlock && actionChassis && !actionUnlock->isEnabled() &&
-                     !actionChassis->isEnabled(),
-                 "action controls must start disabled") ||
+                      !actionChassis->isEnabled() && actionChassisVx &&
+                      !actionChassisVx->isEnabled() && actionHorizontalTarget &&
+                      !actionHorizontalTarget->isEnabled(),
+                  "action controls must start disabled") ||
+        !require(terminalPage && terminalMode && terminalLog && terminalInput &&
+                      terminalSend && terminalClear && terminalPause &&
+                      terminalNotice &&
+                      terminalNotice->text().contains(
+                          QStringLiteral("绕过请求跟踪")),
+                  "terminal page controls or safety notice are missing") ||
+        !require(visionPage && visionPlaceholder && visionUsart1 &&
+                      visionPlaceholder->text().contains(QStringLiteral("K230")) &&
+                      visionPlaceholder->text().contains(QStringLiteral("MaixCAM")) &&
+                      visionUsart1->text().contains(QStringLiteral("USART1")),
+                  "vision placeholder or USART1 description is missing") ||
         !require(imuPage && !imuPage->isEnabled() && overviewPage &&
                      overviewLink && overviewLatency &&
                      overviewLink->text() == QStringLiteral("未连接"),
@@ -119,6 +159,47 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    terminalPage->appendTx(QByteArray::fromHex("aa 55"));
+    terminalPage->appendRx(QByteArray("OK"));
+    if (!require(terminalLog->toPlainText().contains(QStringLiteral("TX")) &&
+                     terminalLog->toPlainText().contains(QStringLiteral("RX")) &&
+                     terminalLog->toPlainText().contains(QStringLiteral("AA 55")),
+                 "terminal did not render timestamped HEX TX/RX records")) {
+        return 1;
+    }
+    terminalMode->setCurrentIndex(1);
+    terminalPage->appendRx(QByteArray("ASCII"));
+    if (!require(terminalLog->toPlainText().contains(QStringLiteral("ASCII")),
+                 "terminal ASCII display mode is not active")) {
+        return 1;
+    }
+    QByteArray rawBytes;
+    QObject::connect(terminalPage, &TerminalPage::rawSendRequested,
+                     [&](QByteArray bytes) { rawBytes = std::move(bytes); });
+    terminalPage->setEnabled(true);
+    terminalPage->setConnected(true);
+    terminalMode->setCurrentIndex(0);
+    terminalInput->setText(QStringLiteral("DE AD"));
+    terminalSend->click();
+    if (!require(rawBytes == QByteArray::fromHex("de ad"),
+                 "terminal manual HEX send did not emit raw bytes")) {
+        return 1;
+    }
+    terminalClear->click();
+    if (!require(terminalLog->toPlainText().isEmpty(),
+                 "terminal clear button did not clear the log")) {
+        return 1;
+    }
+    terminalPage->appendRx(QByteArray("before pause"));
+    terminalPause->click();
+    terminalPage->appendRx(QByteArray("hidden while paused"));
+    if (!require(!terminalLog->toPlainText().contains(
+                     QStringLiteral("hidden while paused")),
+                 "terminal pause button did not suppress display updates")) {
+        return 1;
+    }
+    terminalPause->click();
+
     QByteArray helloRequestBytes;
     QVector<QByteArray> telemetryRequests;
     QObject::connect(protocol, &ProtocolClient::bytesReady,
@@ -143,7 +224,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!require(actionPage->isEnabled() && actionUnlock->isEnabled() &&
-                     !actionChassis->isEnabled(),
+                      !actionChassis->isEnabled() &&
+                      !actionChassisVx->isEnabled() &&
+                      !actionHorizontalTarget->isEnabled(),
                  "handshake enabled unsafe action controls before unlock")) {
         return 1;
     }
@@ -162,12 +245,14 @@ int main(int argc, char **argv) {
     unlockResponse.flags = protocol::Response;
     unlockResponse.payload = QByteArray::fromHex("30 75");
     protocol->ingestBytes(QByteArrayView(encodeFrame(unlockResponse)));
-    if (!require(actionChassis->isEnabled(),
+    if (!require(actionChassis->isEnabled() && actionChassisVx->isEnabled() &&
+                     actionHorizontalTarget->isEnabled(),
                  "successful TEST_UNLOCK did not enable action controls")) {
         return 1;
     }
     device->emergencyStop();
-    if (!require(!actionChassis->isEnabled(),
+    if (!require(!actionChassis->isEnabled() && !actionChassisVx->isEnabled() &&
+                     !actionHorizontalTarget->isEnabled(),
                  "emergency stop did not disable action controls")) {
         return 1;
     }

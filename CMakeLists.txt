@@ -20,6 +20,10 @@ add_executable(robot_tuner
     src/pages/ImuPage.h
     src/pages/ActionTestPage.cpp
     src/pages/ActionTestPage.h
+    src/pages/TerminalPage.cpp
+    src/pages/TerminalPage.h
+    src/pages/VisionPage.cpp
+    src/pages/VisionPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp
@@ -56,6 +60,10 @@ add_executable(test_ui_smoke
     src/pages/ImuPage.h
     src/pages/ActionTestPage.cpp
     src/pages/ActionTestPage.h
+    src/pages/TerminalPage.cpp
+    src/pages/TerminalPage.h
+    src/pages/VisionPage.cpp
+    src/pages/VisionPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp

@@ -76,6 +76,8 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
         QStringLiteral("testChassisDurationSpinBox"), 50, 1000, 100,
         chassisGroup);
     chassisDurationSpinBox_->setSuffix(QStringLiteral(" ms"));
+    actionWidgets_ += {chassisVxSpinBox_, chassisVySpinBox_, chassisWSpinBox_,
+                       chassisDurationSpinBox_};
     chassisFields->addRow(QStringLiteral("vx"), chassisVxSpinBox_);
     chassisFields->addRow(QStringLiteral("vy"), chassisVySpinBox_);
     chassisFields->addRow(QStringLiteral("w"), chassisWSpinBox_);
@@ -126,6 +128,8 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
     horizontalAccelSpinBox_ = makeIntSpin(
         QStringLiteral("testHorizontalAccelSpinBox"), 1, 220, 1,
         mechanismGroup);
+    actionWidgets_ += {horizontalTargetSpinBox_, horizontalSpeedSpinBox_,
+                       horizontalAccelSpinBox_};
     horizontalFields->addRow(QStringLiteral("水平位置"), horizontalTargetSpinBox_);
     horizontalFields->addRow(QStringLiteral("水平速度"), horizontalSpeedSpinBox_);
     horizontalFields->addRow(QStringLiteral("水平加速度"),
@@ -146,6 +150,7 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
                                     100, 2000, 100, mechanismGroup);
     liftAccelSpinBox_ = makeIntSpin(QStringLiteral("testLiftAccelSpinBox"), 1,
                                     220, 1, mechanismGroup);
+    actionWidgets_ += {liftTargetSpinBox_, liftSpeedSpinBox_, liftAccelSpinBox_};
     liftFields->addRow(QStringLiteral("升降位置"), liftTargetSpinBox_);
     liftFields->addRow(QStringLiteral("升降速度"), liftSpeedSpinBox_);
     liftFields->addRow(QStringLiteral("升降加速度"), liftAccelSpinBox_);
@@ -164,6 +169,7 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
     turretSpeedSpinBox_ = makeDoubleSpin(
         QStringLiteral("testTurretSpeedSpinBox"), 1.0, 20.0, 1.0,
         mechanismGroup);
+    actionWidgets_ += {turretAngleSpinBox_, turretSpeedSpinBox_};
     turretFields->addRow(QStringLiteral("云台角度"), turretAngleSpinBox_);
     turretFields->addRow(QStringLiteral("插补速度"), turretSpeedSpinBox_);
     mechanismLayout->addLayout(turretFields);

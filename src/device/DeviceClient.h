@@ -86,6 +86,7 @@ private:
     bool requireActionAccess();
     bool sendTestAction(const QByteArray &payload);
     void refreshUnlockState();
+    void failClosed();
     void setTestsUnlocked(bool unlocked);
     void setEmergencyLocked(bool locked);
 
@@ -94,6 +95,8 @@ private:
     bool handshakeComplete_{};
     bool helloPending_{};
     quint8 helloSequence_{};
+    bool unlockPending_{};
+    quint8 unlockSequence_{};
     bool testsUnlocked_{};
     bool emergencyLocked_{};
     qint64 unlockDurationMs_{};

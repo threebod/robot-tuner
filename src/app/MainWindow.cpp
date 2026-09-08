@@ -17,6 +17,8 @@
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/OverviewPage.h"
+#include "pages/TerminalPage.h"
+#include "pages/VisionPage.h"
 
 namespace {
 
@@ -97,6 +99,12 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("动作测试")) {
             actionPage_ = new ActionTestPage(pageStack_);
             page = actionPage_;
+        } else if (pageName == QStringLiteral("串口终端")) {
+            terminalPage_ = new TerminalPage(pageStack_);
+            page = terminalPage_;
+        } else if (pageName == QStringLiteral("视觉（预留）")) {
+            visionPage_ = new VisionPage(pageStack_);
+            page = visionPage_;
         } else {
             page = new QWidget(pageStack_);
         }
@@ -139,6 +147,32 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleSerialClosed);
     connect(&serial_, &SerialController::serialError, this,
             &MainWindow::handleSerialError);
+    connect(&protocol_, &ProtocolClient::bytesReady, this,
+            [this](QByteArray bytes) {
+                if (terminalPage_ != nullptr) {
+                    terminalPage_->appendTx(bytes);
+                }
+            });
+    connect(&serial_, &SerialController::bytesReceived, this,
+            [this](QByteArray bytes) {
+                if (terminalPage_ != nullptr) {
+                    terminalPage_->appendRx(bytes);
+                }
+            });
+    connect(&protocol_, &ProtocolClient::responseReceived, this,
+            [this](protocol::Frame frame) {
+                if (terminalPage_ != nullptr) {
+                    terminalPage_->appendDecodedFrame(frame);
+                }
+            });
+    connect(&protocol_, &ProtocolClient::eventReceived, this,
+            [this](protocol::Frame frame) {
+                if (terminalPage_ != nullptr) {
+                    terminalPage_->appendDecodedFrame(frame);
+                }
+            });
+    connect(terminalPage_, &TerminalPage::rawSendRequested, this,
+            [this](QByteArray bytes) { serial_.write(QByteArrayView(bytes)); });
     connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
             [this](qint64 latencyMs) {
                 if (overviewPage_ != nullptr) {
@@ -347,10 +381,16 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
     if (actionPage_ != nullptr) {
         actionPage_->setEnabled(enabled);
         actionPage_->setConnected(enabled);
+        actionPage_->setEmergencyLocked(device_.emergencyLocked());
+    }
+    if (terminalPage_ != nullptr) {
+        terminalPage_->setEnabled(serialConnected_);
+        terminalPage_->setConnected(serialConnected_);
     }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
-            if (pageStack_->widget(index) == actionPage_) {
+            if (pageStack_->widget(index) == actionPage_ ||
+                pageStack_->widget(index) == terminalPage_) {
                 continue;
             }
             pageStack_->widget(index)->setEnabled(enabled);

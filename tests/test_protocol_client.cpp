@@ -20,6 +20,13 @@ bool require(bool condition, const char *message) {
     return condition;
 }
 
+protocol::Frame capturedFrame(const QByteArray &bytes) {
+    FrameParser parser;
+    const QVector<protocol::Frame> frames =
+        parser.push(QByteArrayView(bytes));
+    return frames.isEmpty() ? protocol::Frame{} : frames.front();
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -250,6 +257,30 @@ int main(int argc, char **argv) {
     eventClient.clearPending();
     if (!require(connectionClearedCount == 2,
                  "clearing an empty pending table did not emit connectionCleared")) {
+        return 1;
+    }
+
+    // A command that is superseded by a safety transition must not retry or
+    // report a timeout after its owner has cancelled it.
+    ProtocolClient cancelClient(10);
+    int cancelActionFrames = 0;
+    int cancelFailures = 0;
+    QObject::connect(&cancelClient, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         if (capturedFrame(bytes).command == static_cast<quint8>(
+                                 protocol::Command::TestAction)) {
+                             ++cancelActionFrames;
+                         }
+                     });
+    QObject::connect(&cancelClient, &ProtocolClient::requestFailed,
+                     [&](quint8, const QString &) { ++cancelFailures; });
+    cancelClient.sendRequest(protocol::Command::TestAction, QByteArray("move"));
+    cancelClient.cancelPending(protocol::Command::TestAction);
+    QEventLoop cancelLoop;
+    QTimer::singleShot(35, &cancelLoop, &QEventLoop::quit);
+    cancelLoop.exec();
+    if (!require(cancelActionFrames == 1 && cancelFailures == 0,
+                 "cancelled action request was retried or timed out")) {
         return 1;
     }
 

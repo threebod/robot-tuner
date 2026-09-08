@@ -21,6 +21,7 @@ public:
 
     quint8 sendRequest(protocol::Command command, QByteArray payload);
     void ingestBytes(QByteArrayView bytes);
+    void cancelPending(protocol::Command command);
     void clearPending();
 
 signals:
