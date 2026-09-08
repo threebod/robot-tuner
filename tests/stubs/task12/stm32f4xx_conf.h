@@ -30,6 +30,7 @@ typedef struct { uint32_t TIM_Prescaler, TIM_Period, TIM_ClockDivision, TIM_Coun
 #define USART_Mode_Rx 1u
 #define USART_Mode_Tx 2u
 #define USART_IT_RXNE 1u
+#define USART_IT_TXE 4u
 #define USART_FLAG_TXE 2u
 #define USART_FLAG_TC 3u
 #define USART3_IRQn 39u

@@ -215,7 +215,7 @@ set_target_properties(test_stm32_armcc_headers PROPERTIES
 )
 
 option(TASK12_ENABLE_HOST_STUB_COMPILE
-    "Build the optional Task 12 host stub compile probe" OFF)
+    "Build the Task 12 host stub compile probe" ON)
 if(TASK12_ENABLE_HOST_STUB_COMPILE)
     add_executable(test_task12_host_compile
         tests/test_task12_host_compile.c
@@ -240,6 +240,7 @@ if(TASK12_ENABLE_HOST_STUB_COMPILE)
         C_EXTENSIONS OFF
         LINKER_LANGUAGE C
     )
+    target_compile_definitions(test_task12_host_compile PRIVATE HOST_DEBUG_MODE=0)
 endif()
 
 add_executable(test_pid_profile_baseline
@@ -308,4 +309,7 @@ add_test(NAME test_stm32_protocol COMMAND test_stm32_protocol)
 add_test(NAME test_stm32_armcc_headers COMMAND test_stm32_armcc_headers)
 add_test(NAME test_task12_host_static
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/task12_static_test.cmake)
+if(TASK12_ENABLE_HOST_STUB_COMPILE)
+    add_test(NAME test_task12_host_compile COMMAND test_task12_host_compile)
+endif()
 add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)
