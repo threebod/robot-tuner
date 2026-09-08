@@ -54,13 +54,16 @@ QByteArray floatBytes(float value) {
     return bytes;
 }
 
-QByteArray parameterSetPayload(quint16 id, ValueType type, float value) {
+QByteArray mixedParameterSetPayload(float legalValue, float invalidValue) {
     QByteArray payload;
     payload.append(char(0x10));
-    payload.append(char(1));
-    appendU16(&payload, id);
-    payload.append(static_cast<char>(type));
-    payload.append(floatBytes(value));
+    payload.append(char(2));
+    appendU16(&payload, 0x1001);
+    payload.append(static_cast<char>(ValueType::Float32));
+    payload.append(floatBytes(legalValue));
+    appendU16(&payload, 0x1000);
+    payload.append(static_cast<char>(ValueType::Float32));
+    payload.append(floatBytes(invalidValue));
     return payload;
 }
 
@@ -90,6 +93,7 @@ int main(int argc, char **argv) {
     int errorResponseCount = 0;
     int requestFailureCount = 0;
     QString latestFailure;
+    quint8 latestRemoteErrorCode = 0;
 
     QObject::connect(&device, &DeviceClient::handshakeCompleted,
                      [&](DeviceInfo info) { handshakes.push_back(info); });
@@ -108,6 +112,10 @@ int main(int argc, char **argv) {
             ++responseCount;
             if ((frame.flags & protocol::Error) != 0) {
                 ++errorResponseCount;
+                if (!frame.payload.isEmpty()) {
+                    latestRemoteErrorCode =
+                        static_cast<quint8>(frame.payload.front());
+                }
             }
         });
     QObject::connect(&protocol, &ProtocolClient::requestFailed,
@@ -172,17 +180,50 @@ int main(int argc, char **argv) {
     }
 
     const float valueBeforeInvalidWrite = fake.parameterValue(0x1000).toFloat();
+    const float secondValueBeforeInvalidWrite =
+        fake.parameterValue(0x1001).toFloat();
     const int errorsBeforeInvalidWrite = errorResponseCount;
+    latestRemoteErrorCode = 0;
     protocol.sendRequest(protocol::Command::SetParamGroup,
-                         parameterSetPayload(0x1000, ValueType::Float32,
-                                              25.0f));
+                         mixedParameterSetPayload(1.25f, 25.0f));
     if (!require(waitFor([&] {
                      return errorResponseCount > errorsBeforeInvalidWrite;
                  }),
                  "out-of-range PID write did not receive an error") ||
+        !require(latestRemoteErrorCode == 0x07,
+                 "out-of-range PID write did not return PARAM_RANGE") ||
         !require(std::fabs(fake.parameterValue(0x1000).toFloat() -
                            valueBeforeInvalidWrite) < 0.001f,
-                 "out-of-range PID write changed RAM")) {
+                 "out-of-range PID write changed the invalid item in RAM") ||
+        !require(std::fabs(fake.parameterValue(0x1001).toFloat() -
+                           secondValueBeforeInvalidWrite) < 0.001f,
+                 "out-of-range PID write partially changed RAM")) {
+        return 1;
+    }
+
+    latestParameters.clear();
+    if (!require(device.getParameterGroup(0x10),
+                 "PID readback after rejected write was not sent") ||
+        !require(waitFor([&] { return latestParameters.size() == 25; }),
+                 "PID readback after rejected write was not received")) {
+        return 1;
+    }
+    bool invalidWriteReadbackUnchanged = false;
+    bool legalWriteReadbackUnchanged = false;
+    for (const ParameterValue &value : latestParameters) {
+        if (value.id == 0x1000 &&
+            std::fabs(value.value.toFloat() - valueBeforeInvalidWrite) <
+                0.001f) {
+            invalidWriteReadbackUnchanged = true;
+        }
+        if (value.id == 0x1001 &&
+            std::fabs(value.value.toFloat() - secondValueBeforeInvalidWrite) <
+                0.001f) {
+            legalWriteReadbackUnchanged = true;
+        }
+    }
+    if (!require(invalidWriteReadbackUnchanged && legalWriteReadbackUnchanged,
+                 "rejected PID group readback was not atomic")) {
         return 1;
     }
 
@@ -211,13 +252,14 @@ int main(int argc, char **argv) {
     }
 
     const int errorsBeforeMalformedAction = errorResponseCount;
+    latestRemoteErrorCode = 0;
     protocol.sendRequest(protocol::Command::TestAction,
                          QByteArray(1, char(0x10)));
     if (!require(waitFor([&] {
                      return errorResponseCount > errorsBeforeMalformedAction;
                  }),
                  "malformed TEST_ACTION did not receive an error") ||
-        !require(fake.lastErrorCode() == 0x04,
+        !require(latestRemoteErrorCode == 0x04 && fake.lastErrorCode() == 0x04,
                  "malformed TEST_ACTION did not return LENGTH")) {
         return 1;
     }
@@ -251,6 +293,24 @@ int main(int argc, char **argv) {
                  "TEST_ACTION after emergency stop was not rejected") ||
         !require(fake.acceptedActionCount() == actionsBeforeUnlock + 1,
                  "TEST_ACTION after emergency stop was accepted")) {
+        return 1;
+    }
+
+    const int errorsBeforeRemoteEmergencyAction = errorResponseCount;
+    const int actionsBeforeRemoteEmergencyAction = fake.acceptedActionCount();
+    latestRemoteErrorCode = 0;
+    protocol.sendRequest(protocol::Command::TestAction,
+                         chassisActionPayload());
+    if (!require(waitFor([&] {
+                     return errorResponseCount >
+                            errorsBeforeRemoteEmergencyAction;
+                 }),
+                 "raw TEST_ACTION after emergency stop did not receive an error") ||
+        !require(latestRemoteErrorCode == 0x0a && fake.lastErrorCode() == 0x0a,
+                 "raw TEST_ACTION after emergency stop did not return EMERGENCY_LOCKED") ||
+        !require(fake.acceptedActionCount() ==
+                     actionsBeforeRemoteEmergencyAction,
+                 "raw TEST_ACTION after emergency stop was accepted")) {
         return 1;
     }
 
