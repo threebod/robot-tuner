@@ -7,6 +7,41 @@
 #include "host_crc16.h"
 #include "host_frame.h"
 #include "host_link.h"
+#include "host_commands.h"
+#include "host_params.h"
+#include "host_safety.h"
+
+PID_Profile_t PID_Profiles[5] = {
+    { 2.0f, 0.0f, 0.8f, 7.0f, 180.0f },
+    { 3.3f, 0.0f, 1.8f, 7.0f, 30.0f },
+    { 5.0f, 0.0f, 5.0f, 7.0f, 180.0f },
+    { 2.0f, 0.05f, 0.4f, 7.0f, 180.0f },
+    { 2.0f, 0.07f, 0.4f, 7.0f, 180.0f }
+};
+
+static unsigned int fake_action_calls;
+static unsigned int fake_stop_calls;
+static unsigned int fake_emergency_calls;
+
+static void fake_chassis(int16_t vx, int16_t vy, int16_t w,
+                         uint16_t duration_ms)
+{
+    (void)vx;
+    (void)vy;
+    (void)w;
+    (void)duration_ms;
+    ++fake_action_calls;
+}
+
+static void fake_stop(void)
+{
+    ++fake_stop_calls;
+}
+
+static void fake_emergency_stop(void)
+{
+    ++fake_emergency_calls;
+}
 
 static bool require_condition(bool condition, const char *message)
 {
@@ -262,6 +297,150 @@ int main(void)
                                value == 0xA5u,
                            "Bluetooth RX ring changed byte order")) {
         return 1;
+    }
+
+    HostParam_Init();
+    PID_Profiles[0].kp = 2.0f;
+    PID_Profiles[0].ki = 0.0f;
+    {
+        HostParamGroup update = { 0 };
+        HostParamGroup readback = { 0 };
+
+        update.group = 0x10u;
+        update.count = 2u;
+        update.items[0].id = 0x1000u;
+        update.items[0].type = HOST_PARAM_FLOAT32;
+        update.items[0].value.f32 = 4.5f;
+        update.items[1].id = 0x1001u;
+        update.items[1].type = HOST_PARAM_FLOAT32;
+        update.items[1].value.f32 = 0.25f;
+        if (!require_condition(HostParam_SetGroupAtomic(&update) == HOST_ERROR_NONE,
+                               "valid PID parameter group was rejected") ||
+            !require_condition(HostParam_GetGroup(0x10u, &readback) == HOST_ERROR_NONE,
+                               "PID parameter group readback failed") ||
+            !require_condition(readback.items[0].value.f32 == 4.5f &&
+                                   readback.items[1].value.f32 == 0.25f,
+                               "valid PID parameter group was not applied")) {
+            return 1;
+        }
+
+        update.items[0].value.f32 = 5.5f;
+        update.items[1].value.f32 = 2.5f;
+        if (!require_condition(HostParam_SetGroupAtomic(&update) ==
+                                   HOST_ERROR_PARAM_RANGE,
+                               "out-of-range PID group did not report range error") ||
+            !require_condition(HostParam_GetGroup(0x10u, &readback) == HOST_ERROR_NONE,
+                               "PID parameter group readback after rejection failed") ||
+            !require_condition(readback.items[0].value.f32 == 4.5f &&
+                                   readback.items[1].value.f32 == 0.25f,
+                               "invalid PID group was partially applied")) {
+            return 1;
+        }
+    }
+
+    {
+        const HostSafetyCallbacks safety_callbacks = {
+            fake_stop,
+            fake_emergency_stop
+        };
+        const HostCommandCallbacks command_callbacks = {
+            fake_chassis,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL
+        };
+        HostFrame hello_request = { 0 };
+        HostFrame action_request = { 0 };
+        HostFrame response = { 0 };
+
+        fake_action_calls = 0u;
+        fake_stop_calls = 0u;
+        fake_emergency_calls = 0u;
+        HostSafety_Init(&safety_callbacks);
+        HostCommands_Init(&command_callbacks);
+
+        hello_request.version = HOST_PROTOCOL_VERSION;
+        hello_request.flags = 0x01u;
+        hello_request.command = HOST_COMMAND_HELLO;
+        if (!require_condition(HostCommands_Handle(&hello_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_NONE,
+                               "HELLO command was rejected")) {
+            return 1;
+        }
+
+        action_request.version = HOST_PROTOCOL_VERSION;
+        action_request.flags = 0x01u;
+        action_request.command = HOST_COMMAND_TEST_ACTION;
+        action_request.length = 9u;
+        action_request.payload[0] = HOST_ACTION_CHASSIS;
+        action_request.payload[7] = 50u;
+        action_request.payload[8] = 0u;
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_NOT_UNLOCKED,
+                               "locked chassis action was accepted") ||
+            !require_condition(fake_action_calls == 0u,
+                               "locked chassis action callback was called") ||
+            !require_condition(HostSafety_Unlock(1000u),
+                               "safety unlock failed")) {
+            return 1;
+        }
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_NONE,
+                               "unlocked chassis action was rejected") ||
+            !require_condition(fake_action_calls == 1u,
+                               "unlocked chassis action callback was not called") ||
+            !require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 31001u) ==
+                                   HOST_ERROR_NOT_UNLOCKED,
+                               "expired unlock still accepted an action")) {
+            return 1;
+        }
+
+        HostSafety_EmergencyStop();
+        if (!require_condition(fake_emergency_calls == 1u,
+                               "emergency callback was not called") ||
+            !require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 31002u) ==
+                                   HOST_ERROR_EMERGENCY_LOCKED,
+                               "emergency state still accepted an action")) {
+            return 1;
+        }
+    }
+
+    {
+        const HostSafetyCallbacks safety_callbacks = {
+            fake_stop,
+            fake_emergency_stop
+        };
+
+        fake_stop_calls = 0u;
+        fake_emergency_calls = 0u;
+        HostSafety_Init(&safety_callbacks);
+        HostSafety_SetActiveLink(HOST_LINK_USB);
+        HostSafety_NotifyValidFrame(HOST_LINK_USB, 2000u);
+        if (!require_condition(HostSafety_Unlock(2000u),
+                               "watchdog test unlock failed")) {
+            return 1;
+        }
+        HostSafety_Tick(2999u);
+        if (!require_condition(fake_stop_calls == 0u,
+                               "watchdog stopped motion too early")) {
+            return 1;
+        }
+        HostSafety_Tick(3000u);
+        HostSafety_Tick(4000u);
+        if (!require_condition(fake_stop_calls == 1u,
+                               "watchdog stop callback was not exactly once") ||
+            !require_condition(!HostSafety_IsUnlocked(),
+                               "watchdog did not revoke action unlock")) {
+            return 1;
+        }
     }
 
     return 0;
