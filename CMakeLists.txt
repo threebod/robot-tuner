@@ -186,9 +186,54 @@ add_executable(test_stm32_protocol
     ${STM32_HOST_PROTOCOL_DIR}/host_crc16.c
     ${STM32_HOST_PROTOCOL_DIR}/host_frame.c
     ${STM32_HOST_PROTOCOL_DIR}/host_link.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_params.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_safety.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_commands.c
 )
 target_include_directories(test_stm32_protocol PRIVATE ${STM32_HOST_PROTOCOL_DIR})
 set_target_properties(test_stm32_protocol PROPERTIES
+    AUTOMOC OFF
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    LINKER_LANGUAGE C
+)
+
+add_executable(test_stm32_armcc_headers
+    tests/test_stm32_armcc_headers.c
+)
+target_include_directories(test_stm32_armcc_headers PRIVATE
+    ${STM32_HOST_PROTOCOL_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/stubs/armcc
+)
+set_target_properties(test_stm32_armcc_headers PROPERTIES
+    AUTOMOC OFF
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    LINKER_LANGUAGE C
+)
+
+add_executable(test_pid_profile_baseline
+    tests/test_pid_profile_baseline.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/Hardware/pid.c
+)
+target_include_directories(test_pid_profile_baseline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/USER
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/Hardware
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/SYSTEM/sys
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/SYSTEM/delay
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/can_ZDT
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/CORE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/FWLIB/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/imu
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/LED
+    ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/OLED
+)
+target_compile_definitions(test_pid_profile_baseline PRIVATE STM32F40_41xxx)
+target_compile_options(test_pid_profile_baseline PRIVATE -ffunction-sections -fdata-sections)
+target_link_options(test_pid_profile_baseline PRIVATE -Wl,--gc-sections)
+set_target_properties(test_pid_profile_baseline PROPERTIES
     AUTOMOC OFF
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
@@ -232,3 +277,5 @@ set_tests_properties(test_telemetry_plot PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
 add_test(NAME test_stm32_protocol COMMAND test_stm32_protocol)
+add_test(NAME test_stm32_armcc_headers COMMAND test_stm32_armcc_headers)
+add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)

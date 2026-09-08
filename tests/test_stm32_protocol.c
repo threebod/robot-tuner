@@ -12,11 +12,11 @@
 #include "host_safety.h"
 
 PID_Profile_t PID_Profiles[5] = {
-    { 2.0f, 0.0f, 0.8f, 7.0f, 180.0f },
+    { 2.0f, 0.0f, 0.8f, 7.0f, 230.0f },
     { 3.3f, 0.0f, 1.8f, 7.0f, 30.0f },
-    { 5.0f, 0.0f, 5.0f, 7.0f, 180.0f },
-    { 2.0f, 0.05f, 0.4f, 7.0f, 180.0f },
-    { 2.0f, 0.07f, 0.4f, 7.0f, 180.0f }
+    { 5.0f, 0.0f, 5.0f, 7.0f, 230.0f },
+    { 2.0f, 0.05f, 0.4f, 7.0f, 230.0f },
+    { 2.0f, 0.07f, 0.4f, 7.0f, 230.0f }
 };
 
 static unsigned int fake_action_calls;
@@ -370,6 +370,95 @@ int main(void)
                                    HOST_ERROR_NONE,
                                "HELLO command was rejected")) {
             return 1;
+        }
+
+        {
+            HostFrame get_pid_request = { 0 };
+            HostFrame get_pid_page_request = { 0 };
+
+            get_pid_request.version = HOST_PROTOCOL_VERSION;
+            get_pid_request.flags = HOST_FLAG_REQUEST;
+            get_pid_request.command = HOST_COMMAND_GET_PARAM_GROUP;
+            get_pid_request.length = 1u;
+            get_pid_request.payload[0] = 0x10u;
+            if (!require_condition(HostCommands_Handle(&get_pid_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "PID parameter page zero was rejected") ||
+                !require_condition(response.length == HOST_MAX_PAYLOAD,
+                                   "PID parameter page zero was not full") ||
+                !require_condition(response.payload[0] == 0x10u &&
+                                       response.payload[1] == 18u,
+                                   "PID parameter page zero count mismatch") ||
+                !require_condition(response.payload[2] == 0x00u &&
+                                       response.payload[3] == 0x10u,
+                                   "PID parameter page zero first ID mismatch")) {
+                return 1;
+            }
+
+            get_pid_page_request = get_pid_request;
+            get_pid_page_request.length = 2u;
+            get_pid_page_request.payload[1] = 1u;
+            if (!require_condition(HostCommands_Handle(&get_pid_page_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "PID parameter page one was rejected") ||
+                !require_condition(response.length == 51u,
+                                   "PID parameter page one length mismatch") ||
+                !require_condition(response.payload[0] == 0x10u &&
+                                       response.payload[1] == 7u,
+                                   "PID parameter page one count mismatch") ||
+                !require_condition(response.payload[2] == 0x33u &&
+                                       response.payload[3] == 0x10u,
+                                   "PID parameter page one first ID mismatch") ||
+                !require_condition(response.payload[44u] == 0x44u &&
+                                       response.payload[45u] == 0x10u,
+                                   "PID parameter page one last ID mismatch")) {
+                return 1;
+            }
+        }
+
+        {
+            HostFrame invalid_flags_request = { 0 };
+
+            if (!require_condition(HostSafety_Unlock(1000u),
+                                   "strict flag test unlock failed")) {
+                return 1;
+            }
+            fake_stop_calls = 0u;
+            invalid_flags_request.version = HOST_PROTOCOL_VERSION;
+            invalid_flags_request.flags = HOST_FLAG_REQUEST | HOST_FLAG_RESPONSE;
+            invalid_flags_request.command = HOST_COMMAND_GET_STATUS;
+            if (!require_condition(HostCommands_Handle(&invalid_flags_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1900u) ==
+                                       HOST_ERROR_LENGTH,
+                                   "non-request flags were accepted") ||
+                !require_condition(response.flags ==
+                                       (HOST_FLAG_RESPONSE | HOST_FLAG_ERROR),
+                                   "invalid flags response was not an error")) {
+                return 1;
+            }
+            HostSafety_Tick(2000u);
+            if (!require_condition(fake_stop_calls == 1u,
+                                   "invalid flags refreshed watchdog")) {
+                return 1;
+            }
+            HostSafety_Init(&safety_callbacks);
+            HostCommands_Init(&command_callbacks);
+            if (!require_condition(HostCommands_Handle(&hello_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        2100u) ==
+                                       HOST_ERROR_NONE,
+                                   "HELLO after strict flag reset was rejected")) {
+                return 1;
+            }
         }
 
         action_request.version = HOST_PROTOCOL_VERSION;
