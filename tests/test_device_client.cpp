@@ -893,5 +893,274 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // STOP is safe to issue after the handshake and must cancel any action
+    // retry that was already queued.
+    ProtocolClient stopProtocol(5);
+    DeviceClient stopDevice(&stopProtocol);
+    QVector<QByteArray> stopRequests;
+    int stopActionFrameCount = 0;
+    QObject::connect(&stopProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         stopRequests.push_back(bytes);
+                         if (capturedFrame(bytes).command == static_cast<quint8>(
+                                 protocol::Command::TestAction)) {
+                             ++stopActionFrameCount;
+                         }
+                     });
+    stopDevice.hello();
+    const QByteArray stopHello = stopRequests.front();
+    feedResponse(&stopProtocol, stopHello, protocol::Command::Hello,
+                 helloPayload);
+    stopRequests.clear();
+    stopDevice.unlockTests();
+    const QByteArray stopUnlock = stopRequests.back();
+    feedResponse(&stopProtocol, stopUnlock, protocol::Command::TestUnlock,
+                 QByteArray::fromHex("30 75"));
+    stopRequests.clear();
+    stopDevice.testChassis(0, 0, 0, 100);
+    if (!require(stopActionFrameCount == 1,
+                 "test action request was not sent before STOP")) {
+        return 1;
+    }
+    if (!require(stopDevice.stop(), "STOP request was rejected after handshake")) {
+        return 1;
+    }
+    QElapsedTimer stopWait;
+    stopWait.start();
+    while (stopWait.elapsed() < 35) {
+        QCoreApplication::processEvents();
+        QThread::msleep(2);
+    }
+    if (!require(stopActionFrameCount == 1,
+                 "pending test action was retried after STOP")) {
+        return 1;
+    }
+
+    // failClosed must cancel every safety-sensitive request, not just the
+    // unlock request.  A malformed GET_STATUS response triggers that path.
+    ProtocolClient failClosedProtocol(5);
+    DeviceClient failClosedDevice(&failClosedProtocol);
+    QVector<QByteArray> failClosedRequests;
+    int failClosedActionFrames = 0;
+    int failClosedUnlockFrames = 0;
+    int failClosedClearFrames = 0;
+    QObject::connect(&failClosedProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         failClosedRequests.push_back(bytes);
+                         switch (static_cast<protocol::Command>(
+                             capturedFrame(bytes).command)) {
+                         case protocol::Command::TestAction:
+                             ++failClosedActionFrames;
+                             break;
+                         case protocol::Command::TestUnlock:
+                             ++failClosedUnlockFrames;
+                             break;
+                         case protocol::Command::ClearEmergencyStop:
+                             ++failClosedClearFrames;
+                             break;
+                         default:
+                             break;
+                         }
+                     });
+    failClosedDevice.hello();
+    const QByteArray failClosedHello = failClosedRequests.front();
+    feedResponse(&failClosedProtocol, failClosedHello,
+                 protocol::Command::Hello, helloPayload);
+    failClosedProtocol.sendRequest(protocol::Command::TestAction,
+                                   QByteArray("move"));
+    failClosedProtocol.sendRequest(protocol::Command::TestUnlock, {});
+    failClosedProtocol.sendRequest(protocol::Command::ClearEmergencyStop, {});
+    if (!require(failClosedDevice.getStatus(),
+                 "GET_STATUS request was not sent for failClosed test")) {
+        return 1;
+    }
+    const QByteArray malformedStatusRequest = failClosedRequests.back();
+    feedResponse(&failClosedProtocol, malformedStatusRequest,
+                 protocol::Command::GetStatus, QByteArray(1, char(0x00)));
+    QElapsedTimer failClosedWait;
+    failClosedWait.start();
+    while (failClosedWait.elapsed() < 35) {
+        QCoreApplication::processEvents();
+        QThread::msleep(2);
+    }
+    if (!require(failClosedActionFrames == 1 && failClosedUnlockFrames == 1 &&
+                     failClosedClearFrames == 1,
+                 "failClosed left a safety request eligible for retry")) {
+        return 1;
+    }
+
+    // Both status paths must fail closed on malformed payloads, while a valid
+    // emergency status must lock the actions immediately.
+    ProtocolClient statusProtocol(100);
+    DeviceClient statusDevice(&statusProtocol);
+    QVector<QByteArray> statusRequests;
+    QObject::connect(&statusProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { statusRequests.push_back(bytes); });
+    statusDevice.hello();
+    const QByteArray statusHello = statusRequests.front();
+    feedResponse(&statusProtocol, statusHello, protocol::Command::Hello,
+                 helloPayload);
+    statusRequests.clear();
+    statusDevice.unlockTests();
+    const QByteArray statusUnlock = statusRequests.back();
+    feedResponse(&statusProtocol, statusUnlock, protocol::Command::TestUnlock,
+                 QByteArray::fromHex("30 75"));
+    protocol::Frame malformedStatusEvent;
+    malformedStatusEvent.flags = protocol::Event;
+    malformedStatusEvent.sequence = 0;
+    malformedStatusEvent.command = static_cast<quint8>(
+        protocol::Command::StatusTelemetry);
+    malformedStatusEvent.payload = QByteArray(1, char(0x00));
+    statusProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(malformedStatusEvent)));
+    if (!require(!statusDevice.testsUnlocked() &&
+                     !statusDevice.testActionsEnabled(),
+                 "malformed status event left actions unlocked")) {
+        return 1;
+    }
+    statusRequests.clear();
+    statusDevice.unlockTests();
+    const QByteArray statusUnlockAgain = statusRequests.back();
+    feedResponse(&statusProtocol, statusUnlockAgain,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    statusRequests.clear();
+    if (!require(statusDevice.getStatus(),
+                 "GET_STATUS request was not sent for malformed response test")) {
+        return 1;
+    }
+    const QByteArray malformedStatusResponse = statusRequests.back();
+    feedResponse(&statusProtocol, malformedStatusResponse,
+                 protocol::Command::GetStatus, QByteArray(1, char(0x00)));
+    if (!require(!statusDevice.testsUnlocked() &&
+                     !statusDevice.testActionsEnabled(),
+                 "malformed status response left actions unlocked")) {
+        return 1;
+    }
+    statusRequests.clear();
+    statusDevice.unlockTests();
+    const QByteArray emergencyStatusUnlock = statusRequests.back();
+    feedResponse(&statusProtocol, emergencyStatusUnlock,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    protocol::Frame emergencyStatusEvent;
+    emergencyStatusEvent.flags = protocol::Event;
+    emergencyStatusEvent.command = static_cast<quint8>(
+        protocol::Command::StatusTelemetry);
+    emergencyStatusEvent.payload = QByteArray::fromHex("02 01 01 00 00");
+    statusProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(emergencyStatusEvent)));
+    if (!require(statusDevice.emergencyLocked() &&
+                     !statusDevice.testsUnlocked() &&
+                     !statusDevice.testActionsEnabled(),
+                 "emergency status event did not lock actions")) {
+        return 1;
+    }
+
+    // A clear ACK from an obsolete safety generation must not release an
+    // emergency lock after a newer emergency stop.
+    ProtocolClient staleClearProtocol(100);
+    DeviceClient staleClearDevice(&staleClearProtocol);
+    QVector<QByteArray> staleClearRequests;
+    QObject::connect(&staleClearProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         staleClearRequests.push_back(bytes);
+                     });
+    staleClearDevice.hello();
+    const QByteArray staleClearHello = staleClearRequests.front();
+    feedResponse(&staleClearProtocol, staleClearHello,
+                 protocol::Command::Hello, helloPayload);
+    staleClearDevice.emergencyStop();
+    const QByteArray firstEmergencyStop = staleClearRequests.back();
+    feedResponse(&staleClearProtocol, firstEmergencyStop,
+                 protocol::Command::EmergencyStop, {});
+    staleClearRequests.clear();
+    if (!require(staleClearDevice.clearEmergencyStop(),
+                 "CLEAR_EMERGENCY_STOP request was not sent")) {
+        return 1;
+    }
+    const QByteArray staleClearRequest = staleClearRequests.back();
+    staleClearDevice.emergencyStop();
+    protocol::Frame staleClearResponse = capturedFrame(staleClearRequest);
+    staleClearResponse.flags = protocol::Response;
+    staleClearResponse.payload.clear();
+    staleClearProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(staleClearResponse)));
+    if (!require(staleClearDevice.emergencyLocked(),
+                 "late CLEAR_EMERGENCY_STOP ACK cleared a newer emergency lock")) {
+        return 1;
+    }
+    staleClearProtocol.clearPending();
+
+    // HELLO must also invalidate a clear request that was sent on the old
+    // connection generation.
+    ProtocolClient helloClearProtocol(100);
+    DeviceClient helloClearDevice(&helloClearProtocol);
+    QVector<QByteArray> helloClearRequests;
+    QObject::connect(&helloClearProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         helloClearRequests.push_back(bytes);
+                     });
+    helloClearDevice.hello();
+    const QByteArray helloClearHello = helloClearRequests.front();
+    feedResponse(&helloClearProtocol, helloClearHello,
+                 protocol::Command::Hello, helloPayload);
+    helloClearDevice.emergencyStop();
+    const QByteArray helloEmergencyStop = helloClearRequests.back();
+    feedResponse(&helloClearProtocol, helloEmergencyStop,
+                 protocol::Command::EmergencyStop, {});
+    helloClearRequests.clear();
+    helloClearDevice.clearEmergencyStop();
+    const QByteArray oldClearRequest = helloClearRequests.back();
+    helloClearDevice.hello();
+    const QByteArray newHelloRequest = helloClearRequests.back();
+    feedResponse(&helloClearProtocol, newHelloRequest,
+                 protocol::Command::Hello, helloPayload);
+    protocol::Frame oldClearResponse = capturedFrame(oldClearRequest);
+    oldClearResponse.flags = protocol::Response;
+    oldClearResponse.payload.clear();
+    helloClearProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(oldClearResponse)));
+    if (!require(helloClearDevice.emergencyLocked(),
+                 "late CLEAR_EMERGENCY_STOP ACK cleared the HELLO lock")) {
+        return 1;
+    }
+    helloClearProtocol.clearPending();
+
+    // A failClosed transition must invalidate a clear ACK as well.
+    ProtocolClient failClearProtocol(100);
+    DeviceClient failClearDevice(&failClearProtocol);
+    QVector<QByteArray> failClearRequests;
+    QObject::connect(&failClearProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         failClearRequests.push_back(bytes);
+                     });
+    failClearDevice.hello();
+    const QByteArray failClearHello = failClearRequests.front();
+    feedResponse(&failClearProtocol, failClearHello,
+                 protocol::Command::Hello, helloPayload);
+    failClearDevice.emergencyStop();
+    const QByteArray failEmergencyStop = failClearRequests.back();
+    feedResponse(&failClearProtocol, failEmergencyStop,
+                 protocol::Command::EmergencyStop, {});
+    failClearRequests.clear();
+    failClearDevice.clearEmergencyStop();
+    const QByteArray failClearRequest = failClearRequests.back();
+    if (!require(failClearDevice.getStatus(),
+                 "GET_STATUS request was not sent for clear failClosed test")) {
+        return 1;
+    }
+    const QByteArray failStatusRequest = failClearRequests.back();
+    feedResponse(&failClearProtocol, failStatusRequest,
+                 protocol::Command::GetStatus, QByteArray(1, char(0x00)));
+    protocol::Frame failClearResponse = capturedFrame(failClearRequest);
+    failClearResponse.flags = protocol::Response;
+    failClearResponse.payload.clear();
+    failClearProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(failClearResponse)));
+    if (!require(failClearDevice.emergencyLocked(),
+                 "late CLEAR_EMERGENCY_STOP ACK cleared the failClosed lock")) {
+        return 1;
+    }
+    failClearProtocol.clearPending();
+
     return 0;
 }

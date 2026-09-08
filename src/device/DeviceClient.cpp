@@ -214,13 +214,10 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
     helloPending_ = false;
-    unlockPending_ = false;
     if (protocol_ != nullptr) {
         protocol_->cancelPending(protocol::Command::Hello);
-        protocol_->cancelPending(protocol::Command::TestUnlock);
-        protocol_->cancelPending(protocol::Command::TestAction);
     }
-    setTestsUnlocked(false);
+    failClosed();
     if (protocol_ == nullptr) {
         helloPending_ = false;
         return reject(QStringLiteral("协议客户端为空"), 0x02);
@@ -441,6 +438,9 @@ bool DeviceClient::stop() {
     if (!handshakeComplete_) {
         return reject(QStringLiteral("设备尚未完成握手"), 0x09);
     }
+    if (protocol_ != nullptr) {
+        protocol_->cancelPending(protocol::Command::TestAction);
+    }
     return send(protocol::Command::Stop, {});
 }
 
@@ -464,7 +464,16 @@ bool DeviceClient::clearEmergencyStop() {
     if (!emergencyLocked_) {
         return reject(QStringLiteral("设备未处于急停状态"), 0x0a);
     }
-    return send(protocol::Command::ClearEmergencyStop, {});
+    if (protocol_ == nullptr) {
+        return reject(QStringLiteral("协议客户端为空"), 0x02);
+    }
+    ++safetyGeneration_;
+    protocol_->cancelPending(protocol::Command::ClearEmergencyStop);
+    clearEmergencyStopPending_ = true;
+    clearEmergencyStopGeneration_ = safetyGeneration_;
+    clearEmergencyStopSequence_ = protocol_->sendRequest(
+        protocol::Command::ClearEmergencyStop, {});
+    return true;
 }
 
 bool DeviceClient::handshakeComplete() const {
@@ -543,9 +552,13 @@ void DeviceClient::refreshUnlockState() {
 }
 
 void DeviceClient::failClosed() {
+    ++safetyGeneration_;
     unlockPending_ = false;
+    clearEmergencyStopPending_ = false;
     if (protocol_ != nullptr) {
+        protocol_->cancelPending(protocol::Command::TestAction);
         protocol_->cancelPending(protocol::Command::TestUnlock);
+        protocol_->cancelPending(protocol::Command::ClearEmergencyStop);
     }
     setTestsUnlocked(false);
 }
@@ -569,6 +582,9 @@ void DeviceClient::setTestsUnlocked(bool unlocked) {
 
 void DeviceClient::setEmergencyLocked(bool locked) {
     if (emergencyLocked_ == locked) {
+        if (locked) {
+            failClosed();
+        }
         return;
     }
     emergencyLocked_ = locked;
@@ -605,6 +621,16 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
             return;
         }
         unlockPending_ = false;
+    }
+    if (frame.command == static_cast<quint8>(
+            protocol::Command::ClearEmergencyStop)) {
+        if (!clearEmergencyStopPending_ ||
+            frame.sequence != clearEmergencyStopSequence_ ||
+            clearEmergencyStopGeneration_ != safetyGeneration_ ||
+            !handshakeComplete_ || !emergencyLocked_) {
+            return;
+        }
+        clearEmergencyStopPending_ = false;
     }
     if ((frame.flags & protocol::Error) != 0) {
         decodeResponseError(frame.payload);
@@ -827,6 +853,7 @@ void DeviceClient::decodePid(const QByteArray &payload) {
 
 void DeviceClient::decodeStatus(const QByteArray &payload) {
     if (payload.size() != 5) {
+        failClosed();
         reportError(0x04, QStringLiteral("状态遥测长度错误"));
         return;
     }
@@ -846,6 +873,7 @@ void DeviceClient::decodeStatus(const QByteArray &payload) {
 
 void DeviceClient::decodeStatusResponse(const QByteArray &payload) {
     if (payload.size() != 6) {
+        failClosed();
         reportError(0x04, QStringLiteral("状态响应长度错误"));
         return;
     }

@@ -97,6 +97,10 @@ private:
     quint8 helloSequence_{};
     bool unlockPending_{};
     quint8 unlockSequence_{};
+    bool clearEmergencyStopPending_{};
+    quint8 clearEmergencyStopSequence_{};
+    quint64 safetyGeneration_{};
+    quint64 clearEmergencyStopGeneration_{};
     bool testsUnlocked_{};
     bool emergencyLocked_{};
     qint64 unlockDurationMs_{};

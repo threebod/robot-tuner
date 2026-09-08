@@ -84,3 +84,35 @@ E:\Qt\Tools\CMake_64\bin\ctest.exe --test-dir build -C Debug --output-on-failure
 ```
 
 结果：全量 8/8 CTest 通过；未安装依赖，未修改 `yyb_stm32/`、视觉固件或其目录。
+
+## 修复轮 2：TDD RED
+
+先补充回归测试，再运行 `test_device_client`：
+
+- `STOP` 发送前取消待重试的 `TEST_ACTION`；
+- `failClosed()` 同时取消 `TEST_ACTION`、`TEST_UNLOCK` 和
+  `CLEAR_EMERGENCY_STOP` pending，并使旧 ACK 失效；
+- 状态事件/响应长度异常立即锁定动作，正常急停状态也同步锁定；
+- 急停、HELLO 或 fail-closed 后，迟到的解除急停 ACK 不能释放新的急停锁；
+- 保留动作请求超时反馈回归覆盖。
+
+RED 结果：实现前 `test_device_client` 准确失败于
+`pending test action was retried after STOP`，对应 `stop()` 未取消动作 pending。
+
+## 修复轮 2：GREEN
+
+- `stop()` 在发送 STOP 前取消 `TEST_ACTION` pending；
+- `failClosed()` 增加动作、解锁和解除急停 pending 的取消，并递增安全代次；
+- `CLEAR_EMERGENCY_STOP` 记录最近序列与安全代次，响应必须匹配当前握手、急停状态和
+  代次；HELLO、急停、通信失败或异常 ACK 后的旧响应会被丢弃；
+- `decodeStatus()` 与 `decodeStatusResponse()` 的长度错误统一走 fail-closed。
+
+## 修复轮 2：验证
+
+```powershell
+E:\Qt\Tools\CMake_64\bin\cmake.exe --build build --config Debug -j 4
+E:\Qt\Tools\CMake_64\bin\ctest.exe --test-dir build -C Debug --output-on-failure
+```
+
+结果：修复轮 2 单测及全量 CTest 均通过（8/8）；未安装依赖，未修改
+`yyb_stm32/`、视觉固件或其目录。
