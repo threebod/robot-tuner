@@ -15,6 +15,7 @@ class ChassisPage;
 class MechanismPage;
 class OverviewPage;
 class ImuPage;
+class ActionTestPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -32,6 +33,9 @@ private slots:
     void handleParameterGroup(quint8 group, QVector<ParameterValue> values);
     void handleTelemetryRateChanged(quint16 hz);
     void handleCalibrationRequested();
+    void handleTestUnlockStateChanged(bool unlocked, qint64 remainingMs);
+    void handleEmergencyStateChanged(bool locked);
+    void requestClearEmergencyStop();
 
 private:
     void setDeviceControlsEnabled(bool enabled);
@@ -46,9 +50,12 @@ private:
     QPushButton *connectButton_{};
     QLabel *connectionStatusLabel_{};
     QPushButton *emergencyStopButton_{};
+    QPushButton *clearEmergencyStopButton_{};
     QStackedWidget *pageStack_{};
     OverviewPage *overviewPage_{};
     ChassisPage *chassisPage_{};
     ImuPage *imuPage_{};
     MechanismPage *mechanismPage_{};
+    ActionTestPage *actionPage_{};
+    bool serialConnected_{};
 };

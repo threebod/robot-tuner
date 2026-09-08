@@ -1,6 +1,8 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QVariant>
 
 #include <cmath>
@@ -457,6 +459,264 @@ int main(int argc, char **argv) {
                  helloPayload);
     if (!require(staleDevice.handshakeComplete(),
                  "the latest HELLO response was not accepted")) {
+        return 1;
+    }
+
+    // Action commands are safety-gated locally and use the documented
+    // little-endian payload variants.  Emergency stop remains available
+    // before a HELLO response so it can be used as a highest-priority stop.
+    ProtocolClient actionProtocol(5);
+    DeviceClient actionDevice(&actionProtocol);
+    QByteArray actionRequestBytes;
+    int actionErrors = 0;
+    QObject::connect(&actionProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         actionRequestBytes = bytes;
+                     });
+    QObject::connect(&actionDevice, &DeviceClient::deviceError,
+                     [&](const QString &) { ++actionErrors; });
+    if (!require(!actionDevice.unlockTests(),
+                 "TEST_UNLOCK was allowed before HELLO") ||
+        !require(!actionDevice.testChassis(0, 0, 0, 100),
+                 "TEST_ACTION was allowed before HELLO") ||
+        !require(!actionDevice.testHorizontal(0.0, 100, 1),
+                 "horizontal action was allowed before HELLO") ||
+        !require(actionErrors == 3,
+                 "pre-handshake action requests did not fail locally")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.emergencyStop(),
+                 "emergency stop must be available before HELLO")) {
+        return 1;
+    }
+    const protocol::Frame earlyEmergency = capturedFrame(actionRequestBytes);
+    if (!require(earlyEmergency.command == static_cast<quint8>(
+                     protocol::Command::EmergencyStop) &&
+                     earlyEmergency.payload.isEmpty(),
+                 "EMERGENCY_STOP payload is incorrect")) {
+        return 1;
+    }
+    actionProtocol.clearPending();
+
+    actionRequestBytes.clear();
+    actionDevice.hello();
+    const protocol::Frame actionHelloRequest =
+        capturedFrame(actionRequestBytes);
+    protocol::Frame actionHelloResponse = actionHelloRequest;
+    actionHelloResponse.flags = protocol::Response;
+    actionHelloResponse.payload = helloPayload;
+    actionProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(actionHelloResponse)));
+    if (!require(actionDevice.handshakeComplete(),
+                 "action-device HELLO did not complete") ||
+        !require(actionDevice.emergencyLocked(),
+                 "emergency stop state was lost across HELLO")) {
+        return 1;
+    }
+    if (!require(!actionDevice.unlockTests(),
+                 "TEST_UNLOCK was allowed while emergency was locked") ||
+        !require(!actionDevice.testChassis(0, 0, 0, 100),
+                 "chassis action was allowed while emergency was locked")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.clearEmergencyStop(),
+                 "CLEAR_EMERGENCY_STOP request was not sent")) {
+        return 1;
+    }
+    const protocol::Frame clearRequest = capturedFrame(actionRequestBytes);
+    if (!require(clearRequest.command == static_cast<quint8>(
+                     protocol::Command::ClearEmergencyStop) &&
+                     clearRequest.payload.isEmpty(),
+                 "CLEAR_EMERGENCY_STOP payload is incorrect")) {
+        return 1;
+    }
+    protocol::Frame clearResponse = clearRequest;
+    clearResponse.flags = protocol::Response;
+    clearResponse.payload.clear();
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(clearResponse)));
+    if (!require(!actionDevice.emergencyLocked(),
+                 "successful CLEAR_EMERGENCY_STOP did not clear the lock")) {
+        return 1;
+    }
+
+    if (!require(!actionDevice.testChassis(0, 0, 0, 100),
+                 "TEST_ACTION was allowed before TEST_UNLOCK")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.unlockTests(),
+                 "TEST_UNLOCK request was not sent after HELLO")) {
+        return 1;
+    }
+    const protocol::Frame unlockRequest = capturedFrame(actionRequestBytes);
+    if (!require(unlockRequest.command == static_cast<quint8>(
+                     protocol::Command::TestUnlock) &&
+                     unlockRequest.payload.isEmpty(),
+                 "TEST_UNLOCK payload is incorrect")) {
+        return 1;
+    }
+    protocol::Frame unlockResponse = unlockRequest;
+    unlockResponse.flags = protocol::Response;
+    unlockResponse.payload = QByteArray::fromHex("30 75");
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(unlockResponse)));
+    if (!require(actionDevice.testsUnlocked() &&
+                     actionDevice.testActionsEnabled() &&
+                     actionDevice.unlockRemainingMs() > 0,
+                 "successful TEST_UNLOCK did not enable actions")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.testChassis(80, -80, 30, 1000),
+                 "valid chassis action was rejected")) {
+        return 1;
+    }
+    const protocol::Frame chassisRequest = capturedFrame(actionRequestBytes);
+    if (!require(chassisRequest.command == static_cast<quint8>(
+                     protocol::Command::TestAction) &&
+                     chassisRequest.payload ==
+                         QByteArray::fromHex("01 50 00 b0 ff 1e 00 e8 03"),
+                 "chassis action payload is incorrect")) {
+        return 1;
+    }
+    protocol::Frame chassisResponse = chassisRequest;
+    chassisResponse.flags = protocol::Response;
+    chassisResponse.payload.clear();
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(chassisResponse)));
+
+    const int rangeErrorsBefore = actionErrors;
+    actionRequestBytes.clear();
+    if (!require(!actionDevice.testChassis(81, 0, 0, 100),
+                 "out-of-range chassis vx was accepted") ||
+        !require(!actionDevice.testChassis(0, -81, 0, 100),
+                 "out-of-range chassis vy was accepted") ||
+        !require(!actionDevice.testChassis(0, 0, 31, 100),
+                 "out-of-range chassis w was accepted") ||
+        !require(!actionDevice.testChassis(0, 0, 0, 49),
+                 "short chassis duration was accepted") ||
+        !require(!actionDevice.testChassis(0, 0, 0, 1001),
+                 "long chassis duration was accepted") ||
+        !require(actionRequestBytes.isEmpty() && actionErrors == rangeErrorsBefore + 5,
+                 "invalid chassis actions were not rejected without sending")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.testHorizontal(-120.0, 2000, 220),
+                 "valid horizontal action was rejected")) {
+        return 1;
+    }
+    const protocol::Frame horizontalRequest = capturedFrame(actionRequestBytes);
+    if (!require(horizontalRequest.payload.size() == 8 &&
+                     static_cast<quint8>(horizontalRequest.payload.at(0)) ==
+                         0x10 &&
+                     horizontalRequest.payload.mid(5) ==
+                         QByteArray::fromHex("d0 07 dc"),
+                 "horizontal action payload is incorrect")) {
+        return 1;
+    }
+    protocol::Frame horizontalResponse = horizontalRequest;
+    horizontalResponse.flags = protocol::Response;
+    horizontalResponse.payload.clear();
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(horizontalResponse)));
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.testLift(50.0, 100, 1),
+                 "valid lift action was rejected") ||
+        !require(actionDevice.testTurret(295.0, 20.0),
+                 "valid turret action was rejected") ||
+        !require(actionDevice.setPlatformPosition(3),
+                 "valid platform action was rejected") ||
+        !require(actionDevice.setGripperOpen(true),
+                 "valid gripper action was rejected")) {
+        return 1;
+    }
+    if (!require(!actionDevice.testHorizontal(-121.0, 100, 1),
+                 "out-of-range horizontal target was accepted") ||
+        !require(!actionDevice.testLift(51.0, 100, 1),
+                 "out-of-range lift target was accepted") ||
+        !require(!actionDevice.testTurret(134.0, 1.0),
+                 "out-of-range turret target was accepted") ||
+        !require(!actionDevice.setPlatformPosition(4),
+                 "invalid platform position was accepted") ||
+        !require(actionDevice.testActionsEnabled(),
+                 "range rejection unexpectedly disabled test actions")) {
+        return 1;
+    }
+    actionProtocol.clearPending();
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.emergencyStop(),
+                 "emergency stop request was rejected after unlock") ||
+        !require(actionDevice.emergencyLocked() &&
+                     !actionDevice.testActionsEnabled(),
+                 "emergency stop did not lock actions immediately") ||
+        !require(!actionDevice.testChassis(0, 0, 0, 100),
+                 "action was allowed after emergency stop")) {
+        return 1;
+    }
+    actionProtocol.clearPending();
+
+    // A short unlock response lets the test verify expiration without a
+    // 30-second test delay.  Request timeout must also report an error and
+    // invalidate the safety state.
+    actionDevice.hello();
+    const protocol::Frame actionSecondHelloFrame =
+        capturedFrame(actionRequestBytes);
+    protocol::Frame secondHelloResponse = actionSecondHelloFrame;
+    secondHelloResponse.flags = protocol::Response;
+    secondHelloResponse.payload = helloPayload;
+    actionProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(secondHelloResponse)));
+    actionDevice.clearEmergencyStop();
+    const protocol::Frame secondClearRequest =
+        capturedFrame(actionRequestBytes);
+    protocol::Frame secondClearResponse = secondClearRequest;
+    secondClearResponse.flags = protocol::Response;
+    secondClearResponse.payload.clear();
+    actionProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(secondClearResponse)));
+    actionDevice.unlockTests();
+    const protocol::Frame shortUnlockRequest =
+        capturedFrame(actionRequestBytes);
+    protocol::Frame shortUnlockResponse = shortUnlockRequest;
+    shortUnlockResponse.flags = protocol::Response;
+    shortUnlockResponse.payload = QByteArray::fromHex("01 00");
+    actionProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(shortUnlockResponse)));
+    QThread::msleep(3);
+    QCoreApplication::processEvents();
+    if (!require(!actionDevice.testsUnlocked() &&
+                     !actionDevice.testActionsEnabled(),
+                 "expired TEST_UNLOCK still enabled actions")) {
+        return 1;
+    }
+
+    actionDevice.unlockTests();
+    const protocol::Frame timeoutUnlockRequest =
+        capturedFrame(actionRequestBytes);
+    protocol::Frame timeoutUnlockResponse = timeoutUnlockRequest;
+    timeoutUnlockResponse.flags = protocol::Response;
+    timeoutUnlockResponse.payload = QByteArray::fromHex("30 75");
+    actionProtocol.ingestBytes(
+        QByteArrayView(encodeFrame(timeoutUnlockResponse)));
+    const int timeoutErrorsBefore = actionErrors;
+    actionDevice.testChassis(0, 0, 0, 100);
+    QElapsedTimer timeoutWait;
+    timeoutWait.start();
+    while (timeoutWait.elapsed() < 40) {
+        QCoreApplication::processEvents();
+        QThread::msleep(2);
+    }
+    if (!require(actionErrors > timeoutErrorsBefore &&
+                     !actionDevice.handshakeComplete() &&
+                     !actionDevice.testActionsEnabled(),
+                 "action timeout did not report an error and lock actions")) {
         return 1;
     }
 

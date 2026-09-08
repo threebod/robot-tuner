@@ -14,6 +14,7 @@
 
 #include "app/MainWindow.h"
 #include "device/DeviceClient.h"
+#include "pages/ActionTestPage.h"
 #include "pages/ChassisPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
@@ -51,9 +52,13 @@ int main(int argc, char **argv) {
     auto *connectionStatusLabel =
         window.findChild<QLabel *>("connectionStatusLabel");
     auto *stop = window.findChild<QPushButton *>("emergencyStopButton");
+    auto *clearStop =
+        window.findChild<QPushButton *>("clearEmergencyStopButton");
     auto *tuningPage = window.findChild<QWidget *>("底盘与 PID");
     auto *mechanismPage = window.findChild<QWidget *>("机械臂与舵机");
     auto *actionPage = window.findChild<QWidget *>("动作测试");
+    auto *actionUnlock = window.findChild<QPushButton *>("testUnlockButton");
+    auto *actionChassis = window.findChild<QPushButton *>("testChassisButton");
     auto *pidProfile = window.findChild<QComboBox *>("pidProfileCombo");
     auto *pidKp = window.findChild<QDoubleSpinBox *>("pidKpSpinBox");
     auto *pidWrite = window.findChild<QPushButton *>("pidWriteButton");
@@ -76,11 +81,16 @@ int main(int argc, char **argv) {
                  "connection controls are missing") ||
         !require(connectionStatusLabel && stop && !stop->isEnabled(),
                  "connection status controls are invalid") ||
+        !require(clearStop && !clearStop->isEnabled(),
+                 "clear emergency control must start disabled") ||
         !require(tuningPage && !tuningPage->isEnabled() && mechanismPage &&
                      !mechanismPage->isEnabled(),
                  "parameter pages must be disabled before handshake") ||
         !require(actionPage && !actionPage->isEnabled(),
                  "action page must stay disabled before handshake") ||
+        !require(actionUnlock && actionChassis && !actionUnlock->isEnabled() &&
+                     !actionChassis->isEnabled(),
+                 "action controls must start disabled") ||
         !require(imuPage && !imuPage->isEnabled() && overviewPage &&
                      overviewLink && overviewLatency &&
                      overviewLink->text() == QStringLiteral("未连接"),
@@ -130,6 +140,35 @@ int main(int argc, char **argv) {
     protocol->ingestBytes(QByteArrayView(encodeFrame(helloResponse)));
     if (!require(!telemetryRequests.isEmpty(),
                  "successful HELLO did not subscribe telemetry automatically")) {
+        return 1;
+    }
+    if (!require(actionPage->isEnabled() && actionUnlock->isEnabled() &&
+                     !actionChassis->isEnabled(),
+                 "handshake enabled unsafe action controls before unlock")) {
+        return 1;
+    }
+    QByteArray unlockRequestBytes;
+    QObject::connect(protocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         const protocol::Frame frame = capturedFrame(bytes);
+                         if (frame.command == static_cast<quint8>(
+                                 protocol::Command::TestUnlock)) {
+                             unlockRequestBytes = bytes;
+                         }
+                     });
+    actionUnlock->click();
+    const protocol::Frame unlockRequest = capturedFrame(unlockRequestBytes);
+    protocol::Frame unlockResponse = unlockRequest;
+    unlockResponse.flags = protocol::Response;
+    unlockResponse.payload = QByteArray::fromHex("30 75");
+    protocol->ingestBytes(QByteArrayView(encodeFrame(unlockResponse)));
+    if (!require(actionChassis->isEnabled(),
+                 "successful TEST_UNLOCK did not enable action controls")) {
+        return 1;
+    }
+    device->emergencyStop();
+    if (!require(!actionChassis->isEnabled(),
+                 "emergency stop did not disable action controls")) {
         return 1;
     }
     const protocol::Frame defaultTelemetry =

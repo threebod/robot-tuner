@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QByteArrayView>
+#include <QElapsedTimer>
 #include <QObject>
+#include <QTimer>
 #include <QVector>
 
 #include "device/ParameterCatalog.h"
@@ -23,7 +25,25 @@ public:
     bool setTelemetry(quint8 mask, quint16 periodMs);
     bool calibrateImu();
 
+    // Controlled test actions.  These methods validate the host-side safety
+    // envelope before creating a protocol request; the STM32 applies the
+    // same limits again at the hardware boundary.
+    bool unlockTests();
+    bool testChassis(qint32 vx, qint32 vy, qint32 w, qint32 durationMs);
+    bool testHorizontal(double target, qint32 speed, qint32 accel);
+    bool testLift(double target, qint32 speed, qint32 accel);
+    bool testTurret(double angle, double interpolationSpeed);
+    bool setPlatformPosition(qint32 position);
+    bool setGripperOpen(bool open);
+    bool stop();
+    bool emergencyStop();
+    bool clearEmergencyStop();
+
     bool handshakeComplete() const;
+    bool testsUnlocked() const;
+    bool testActionsEnabled() const;
+    qint64 unlockRemainingMs() const;
+    bool emergencyLocked() const;
     const ParameterCatalog &parameterCatalog() const;
 
 signals:
@@ -34,6 +54,8 @@ signals:
     void statusReceived(DeviceStatus status);
     void telemetryConfigured(quint8 acceptedMask, quint16 actualPeriodMs);
     void imuCalibrationStateChanged(quint8 state);
+    void testUnlockStateChanged(bool unlocked, qint64 remainingMs);
+    void emergencyStateChanged(bool locked);
     void deviceError(QString message);
     void terminalLog(QString message);
 
@@ -56,11 +78,25 @@ private:
     void decodeStatusResponse(const QByteArray &payload);
     void decodeTelemetryConfiguration(const QByteArray &payload);
     void decodeCalibrationState(const QByteArray &payload);
+    void decodeTestUnlock(const QByteArray &payload);
+    void decodeEmptyResponse(const QByteArray &payload,
+                             protocol::Command command);
     void decodeResponseError(const QByteArray &payload);
+
+    bool requireActionAccess();
+    bool sendTestAction(const QByteArray &payload);
+    void refreshUnlockState();
+    void setTestsUnlocked(bool unlocked);
+    void setEmergencyLocked(bool locked);
 
     ProtocolClient *protocol_{};
     ParameterCatalog catalog_;
     bool handshakeComplete_{};
     bool helloPending_{};
     quint8 helloSequence_{};
+    bool testsUnlocked_{};
+    bool emergencyLocked_{};
+    qint64 unlockDurationMs_{};
+    QElapsedTimer unlockElapsed_;
+    QTimer unlockTimer_;
 };

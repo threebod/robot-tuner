@@ -46,6 +46,17 @@ void appendU32(QByteArray *bytes, quint32 value) {
     bytes->append(static_cast<char>((value >> 24) & 0xff));
 }
 
+void appendI16(QByteArray *bytes, qint16 value) {
+    appendU16(bytes, static_cast<quint16>(value));
+}
+
+void appendFloat32(QByteArray *bytes, double value) {
+    const float converted = static_cast<float>(value);
+    quint32 bits = 0;
+    std::memcpy(&bits, &converted, sizeof(converted));
+    appendU32(bytes, bits);
+}
+
 bool readNumeric(const QVariant &value, ValueType type, quint32 *bits,
                  int *width) {
     bool ok = false;
@@ -177,6 +188,11 @@ QString errorText(quint8 code) {
 
 DeviceClient::DeviceClient(ProtocolClient *protocol, QObject *parent)
     : QObject(parent), protocol_(protocol) {
+    unlockTimer_.setSingleShot(false);
+    unlockTimer_.setTimerType(Qt::PreciseTimer);
+    unlockTimer_.setInterval(50);
+    connect(&unlockTimer_, &QTimer::timeout, this,
+            &DeviceClient::refreshUnlockState);
     if (protocol_ == nullptr) {
         reportError(0x02, QStringLiteral("协议客户端为空"));
         return;
@@ -196,6 +212,7 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
+    setTestsUnlocked(false);
     if (protocol_ == nullptr) {
         helloPending_ = false;
         return reject(QStringLiteral("协议客户端为空"), 0x02);
@@ -296,8 +313,166 @@ bool DeviceClient::calibrateImu() {
     return send(protocol::Command::ImuCalibrate, {});
 }
 
+bool DeviceClient::unlockTests() {
+    refreshUnlockState();
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    if (emergencyLocked_) {
+        return reject(QStringLiteral("设备处于急停状态"), 0x0a);
+    }
+    return send(protocol::Command::TestUnlock, {});
+}
+
+bool DeviceClient::testChassis(qint32 vx, qint32 vy, qint32 w,
+                               qint32 durationMs) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    if (vx < -80 || vx > 80 || vy < -80 || vy > 80 || w < -30 || w > 30 ||
+        durationMs < 50 || durationMs > 1000) {
+        return reject(QStringLiteral("底盘动作参数越界"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(9);
+    payload.append(char(0x01));
+    appendI16(&payload, static_cast<qint16>(vx));
+    appendI16(&payload, static_cast<qint16>(vy));
+    appendI16(&payload, static_cast<qint16>(w));
+    appendU16(&payload, static_cast<quint16>(durationMs));
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::testHorizontal(double target, qint32 speed, qint32 accel) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    if (!std::isfinite(target) || target < -120.0 || target > 63.0 ||
+        speed < 100 || speed > 2000 || accel < 1 || accel > 220) {
+        return reject(QStringLiteral("水平机构动作参数越界"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(8);
+    payload.append(char(0x10));
+    appendFloat32(&payload, target);
+    appendU16(&payload, static_cast<quint16>(speed));
+    payload.append(static_cast<char>(accel));
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::testLift(double target, qint32 speed, qint32 accel) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    if (!std::isfinite(target) || target < 0.0 || target > 50.0 ||
+        speed < 100 || speed > 2000 || accel < 1 || accel > 220) {
+        return reject(QStringLiteral("升降机构动作参数越界"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(8);
+    payload.append(char(0x11));
+    appendFloat32(&payload, target);
+    appendU16(&payload, static_cast<quint16>(speed));
+    payload.append(static_cast<char>(accel));
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::testTurret(double angle, double interpolationSpeed) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    if (!std::isfinite(angle) || angle < 135.0 || angle > 295.0 ||
+        !std::isfinite(interpolationSpeed) || interpolationSpeed < 1.0 ||
+        interpolationSpeed > 20.0) {
+        return reject(QStringLiteral("云台动作参数越界"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(9);
+    payload.append(char(0x12));
+    appendFloat32(&payload, angle);
+    appendFloat32(&payload, interpolationSpeed);
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::setPlatformPosition(qint32 position) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    if (position < 1 || position > 3) {
+        return reject(QStringLiteral("平台位置无效"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.append(char(0x20));
+    payload.append(static_cast<char>(position));
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::setGripperOpen(bool open) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+
+    QByteArray payload;
+    payload.append(char(0x21));
+    payload.append(static_cast<char>(open ? 1 : 0));
+    return sendTestAction(payload);
+}
+
+bool DeviceClient::stop() {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    return send(protocol::Command::Stop, {});
+}
+
+bool DeviceClient::emergencyStop() {
+    if (protocol_ == nullptr) {
+        return reject(QStringLiteral("协议客户端为空"), 0x02);
+    }
+    // Lock locally before emitting bytes so a re-entrant UI or serial
+    // callback cannot submit another action while the stop is in flight.
+    setEmergencyLocked(true);
+    setTestsUnlocked(false);
+    return send(protocol::Command::EmergencyStop, {});
+}
+
+bool DeviceClient::clearEmergencyStop() {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    if (!emergencyLocked_) {
+        return reject(QStringLiteral("设备未处于急停状态"), 0x0a);
+    }
+    return send(protocol::Command::ClearEmergencyStop, {});
+}
+
 bool DeviceClient::handshakeComplete() const {
     return handshakeComplete_;
+}
+
+bool DeviceClient::testsUnlocked() const {
+    return testsUnlocked_ && unlockElapsed_.isValid() &&
+           unlockElapsed_.elapsed() < unlockDurationMs_;
+}
+
+bool DeviceClient::testActionsEnabled() const {
+    return handshakeComplete_ && testsUnlocked() && !emergencyLocked_;
+}
+
+qint64 DeviceClient::unlockRemainingMs() const {
+    if (!testsUnlocked()) {
+        return 0;
+    }
+    return qMax<qint64>(0, unlockDurationMs_ - unlockElapsed_.elapsed());
+}
+
+bool DeviceClient::emergencyLocked() const {
+    return emergencyLocked_;
 }
 
 const ParameterCatalog &DeviceClient::parameterCatalog() const {
@@ -310,6 +485,69 @@ bool DeviceClient::send(protocol::Command command, const QByteArray &payload) {
     }
     protocol_->sendRequest(command, payload);
     return true;
+}
+
+bool DeviceClient::requireActionAccess() {
+    refreshUnlockState();
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    if (emergencyLocked_) {
+        return reject(QStringLiteral("设备处于急停状态"), 0x0a);
+    }
+    if (!testsUnlocked_) {
+        return reject(QStringLiteral("调试动作尚未解锁"), 0x09);
+    }
+    return true;
+}
+
+bool DeviceClient::sendTestAction(const QByteArray &payload) {
+    if (payload.isEmpty() || payload.size() > 128) {
+        return reject(QStringLiteral("动作数据长度错误"), 0x04);
+    }
+    return send(protocol::Command::TestAction, payload);
+}
+
+void DeviceClient::refreshUnlockState() {
+    if (!testsUnlocked_) {
+        if (unlockTimer_.isActive()) {
+            unlockTimer_.stop();
+        }
+        return;
+    }
+    if (!unlockElapsed_.isValid() || unlockElapsed_.elapsed() >= unlockDurationMs_) {
+        setTestsUnlocked(false);
+        return;
+    }
+    emit testUnlockStateChanged(true, unlockRemainingMs());
+}
+
+void DeviceClient::setTestsUnlocked(bool unlocked) {
+    const bool wasUnlocked = testsUnlocked_;
+    testsUnlocked_ = unlocked;
+    if (unlocked) {
+        unlockElapsed_.restart();
+        unlockTimer_.start();
+    } else {
+        unlockTimer_.stop();
+        unlockDurationMs_ = 0;
+        unlockElapsed_.invalidate();
+    }
+    if (wasUnlocked != unlocked) {
+        emit testUnlockStateChanged(unlocked,
+                                    unlocked ? unlockRemainingMs() : 0);
+    }
+}
+
+void DeviceClient::setEmergencyLocked(bool locked) {
+    if (emergencyLocked_ == locked) {
+        return;
+    }
+    emergencyLocked_ = locked;
+    if (locked) {
+        setTestsUnlocked(false);
+    }
+    emit emergencyStateChanged(locked);
 }
 
 bool DeviceClient::reject(const QString &message, quint8 code) {
@@ -354,6 +592,16 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
     case protocol::Command::ImuCalibrate:
         decodeCalibrationState(frame.payload);
         break;
+    case protocol::Command::TestUnlock:
+        decodeTestUnlock(frame.payload);
+        break;
+    case protocol::Command::TestAction:
+    case protocol::Command::Stop:
+    case protocol::Command::EmergencyStop:
+    case protocol::Command::ClearEmergencyStop:
+        decodeEmptyResponse(frame.payload,
+                            static_cast<protocol::Command>(frame.command));
+        break;
     default:
         break;
     }
@@ -383,6 +631,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
         handshakeComplete_ = false;
         helloPending_ = false;
     }
+    setTestsUnlocked(false);
     if (reason == QStringLiteral("连接已断开")) {
         handshakeComplete_ = false;
         helloPending_ = false;
@@ -394,6 +643,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
 void DeviceClient::handleConnectionCleared() {
     handshakeComplete_ = false;
     helloPending_ = false;
+    setTestsUnlocked(false);
 }
 
 void DeviceClient::decodeHello(const QByteArray &payload) {
@@ -550,6 +800,12 @@ void DeviceClient::decodeStatus(const QByteArray &payload) {
     status.emergency = static_cast<quint8>(payload.at(1));
     status.unlocked = static_cast<quint8>(payload.at(2));
     status.lastError = readU16(payload, 3);
+    if (status.emergency != 0) {
+        setEmergencyLocked(true);
+    }
+    if (status.unlocked == 0) {
+        setTestsUnlocked(false);
+    }
     emit statusReceived(status);
 }
 
@@ -564,6 +820,12 @@ void DeviceClient::decodeStatusResponse(const QByteArray &payload) {
     status.unlocked = static_cast<quint8>(payload.at(2));
     status.activeLink = static_cast<quint8>(payload.at(3));
     status.lastError = readU16(payload, 4);
+    if (status.emergency != 0) {
+        setEmergencyLocked(true);
+    }
+    if (status.unlocked == 0) {
+        setTestsUnlocked(false);
+    }
     emit statusReceived(status);
 }
 
@@ -589,11 +851,48 @@ void DeviceClient::decodeCalibrationState(const QByteArray &payload) {
     emit imuCalibrationStateChanged(state);
 }
 
+void DeviceClient::decodeTestUnlock(const QByteArray &payload) {
+    if (payload.size() != 2) {
+        reportError(0x04, QStringLiteral("调试解锁响应长度错误"));
+        return;
+    }
+    const quint16 durationMs = readU16(payload, 0);
+    if (durationMs == 0) {
+        reportError(0x07, QStringLiteral("调试解锁时长无效"));
+        return;
+    }
+    unlockDurationMs_ = durationMs;
+    setTestsUnlocked(true);
+}
+
+void DeviceClient::decodeEmptyResponse(const QByteArray &payload,
+                                       protocol::Command command) {
+    if (!payload.isEmpty()) {
+        reportError(0x04, QStringLiteral("安全动作响应长度错误"));
+        return;
+    }
+    switch (command) {
+    case protocol::Command::EmergencyStop:
+        setEmergencyLocked(true);
+        break;
+    case protocol::Command::ClearEmergencyStop:
+        setEmergencyLocked(false);
+        break;
+    default:
+        break;
+    }
+}
+
 void DeviceClient::decodeResponseError(const QByteArray &payload) {
     if (payload.isEmpty()) {
         reportError(0x04, QStringLiteral("错误响应缺少错误码"));
         return;
     }
     const quint8 code = static_cast<quint8>(payload.at(0));
+    if (code == 0x09) {
+        setTestsUnlocked(false);
+    } else if (code == 0x0a) {
+        setEmergencyLocked(true);
+    }
     reportError(code, errorText(code));
 }

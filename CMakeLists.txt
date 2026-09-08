@@ -18,6 +18,8 @@ add_executable(robot_tuner
     src/pages/OverviewPage.h
     src/pages/ImuPage.cpp
     src/pages/ImuPage.h
+    src/pages/ActionTestPage.cpp
+    src/pages/ActionTestPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp
@@ -52,6 +54,8 @@ add_executable(test_ui_smoke
     src/pages/OverviewPage.h
     src/pages/ImuPage.cpp
     src/pages/ImuPage.h
+    src/pages/ActionTestPage.cpp
+    src/pages/ActionTestPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
     src/app/MainWindow.cpp

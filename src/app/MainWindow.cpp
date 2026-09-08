@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStringList>
@@ -11,6 +12,7 @@
 
 #include <utility>
 
+#include "pages/ActionTestPage.h"
 #include "pages/ChassisPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
@@ -54,6 +56,11 @@ MainWindow::MainWindow(QWidget *parent)
     emergencyStopButton_ = new QPushButton("急停", centralWidget);
     emergencyStopButton_->setObjectName("emergencyStopButton");
     emergencyStopButton_->setEnabled(false);
+    clearEmergencyStopButton_ =
+        new QPushButton(QStringLiteral("解除急停"), centralWidget);
+    clearEmergencyStopButton_->setObjectName(
+        QStringLiteral("clearEmergencyStopButton"));
+    clearEmergencyStopButton_->setEnabled(false);
 
     connectionBar->addWidget(portCombo_);
     connectionBar->addWidget(baudCombo_);
@@ -62,6 +69,7 @@ MainWindow::MainWindow(QWidget *parent)
     connectionBar->addStretch();
     connectionBar->addWidget(connectButton_);
     connectionBar->addWidget(emergencyStopButton_);
+    connectionBar->addWidget(clearEmergencyStopButton_);
     mainLayout->addLayout(connectionBar);
 
     auto *contentLayout = new QHBoxLayout;
@@ -86,6 +94,9 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("机械臂与舵机")) {
             mechanismPage_ = new MechanismPage(pageStack_);
             page = mechanismPage_;
+        } else if (pageName == QStringLiteral("动作测试")) {
+            actionPage_ = new ActionTestPage(pageStack_);
+            page = actionPage_;
         } else {
             page = new QWidget(pageStack_);
         }
@@ -115,6 +126,13 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::refreshPorts);
     connect(connectButton_, &QPushButton::clicked, this,
             &MainWindow::toggleConnection);
+    connect(emergencyStopButton_, &QPushButton::clicked, this, [this] {
+        // Emergency stop is intentionally immediate and never asks for a
+        // confirmation.  DeviceClient also locks actions before TX.
+        device_.emergencyStop();
+    });
+    connect(clearEmergencyStopButton_, &QPushButton::clicked, this,
+            &MainWindow::requestClearEmergencyStop);
     connect(&serial_, &SerialController::opened, this,
             &MainWindow::handleSerialOpened);
     connect(&serial_, &SerialController::closed, this,
@@ -147,6 +165,10 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(&device_, &DeviceClient::deviceError, this,
             &MainWindow::handleDeviceError);
+    connect(&device_, &DeviceClient::testUnlockStateChanged, this,
+            &MainWindow::handleTestUnlockStateChanged);
+    connect(&device_, &DeviceClient::emergencyStateChanged, this,
+            &MainWindow::handleEmergencyStateChanged);
     connect(&device_, &DeviceClient::imuSampleReceived, this,
             [this](ImuSample sample) {
                 if (imuPage_ != nullptr) {
@@ -200,6 +222,22 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::handleTelemetryRateChanged);
     connect(imuPage_, &ImuPage::calibrationRequested, this,
             &MainWindow::handleCalibrationRequested);
+    connect(actionPage_, &ActionTestPage::unlockRequested, &device_,
+            &DeviceClient::unlockTests);
+    connect(actionPage_, &ActionTestPage::chassisRequested, &device_,
+            &DeviceClient::testChassis);
+    connect(actionPage_, &ActionTestPage::horizontalRequested, &device_,
+            &DeviceClient::testHorizontal);
+    connect(actionPage_, &ActionTestPage::liftRequested, &device_,
+            &DeviceClient::testLift);
+    connect(actionPage_, &ActionTestPage::turretRequested, &device_,
+            &DeviceClient::testTurret);
+    connect(actionPage_, &ActionTestPage::platformPositionRequested, &device_,
+            &DeviceClient::setPlatformPosition);
+    connect(actionPage_, &ActionTestPage::gripperRequested, &device_,
+            &DeviceClient::setGripperOpen);
+    connect(actionPage_, &ActionTestPage::stopRequested, &device_,
+            &DeviceClient::stop);
 
     setDeviceControlsEnabled(false);
     refreshPorts();
@@ -225,6 +263,7 @@ void MainWindow::toggleConnection() {
 }
 
 void MainWindow::handleSerialOpened() {
+    serialConnected_ = true;
     portCombo_->setEnabled(false);
     baudCombo_->setEnabled(false);
     refreshPortsButton_->setEnabled(false);
@@ -235,10 +274,13 @@ void MainWindow::handleSerialOpened() {
         overviewPage_->setLatency(-1);
     }
     setDeviceControlsEnabled(false);
+    emergencyStopButton_->setEnabled(true);
+    clearEmergencyStopButton_->setEnabled(false);
     device_.hello();
 }
 
 void MainWindow::handleSerialClosed() {
+    serialConnected_ = false;
     portCombo_->setEnabled(true);
     baudCombo_->setEnabled(true);
     refreshPortsButton_->setEnabled(true);
@@ -249,6 +291,8 @@ void MainWindow::handleSerialClosed() {
         overviewPage_->setLatency(-1);
     }
     setDeviceControlsEnabled(false);
+    emergencyStopButton_->setEnabled(false);
+    clearEmergencyStopButton_->setEnabled(false);
 }
 
 void MainWindow::handleSerialError(QString message) {
@@ -264,6 +308,9 @@ void MainWindow::handleDeviceError(QString message) {
     }
     if (imuPage_ != nullptr) {
         imuPage_->setDeviceError(message);
+    }
+    if (actionPage_ != nullptr) {
+        actionPage_->setDeviceError(message);
     }
     if (!device_.handshakeComplete()) {
         setDeviceControlsEnabled(false);
@@ -297,13 +344,24 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
     if (imuPage_ != nullptr) {
         imuPage_->setConnected(enabled);
     }
+    if (actionPage_ != nullptr) {
+        actionPage_->setEnabled(enabled);
+        actionPage_->setConnected(enabled);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
+            if (pageStack_->widget(index) == actionPage_) {
+                continue;
+            }
             pageStack_->widget(index)->setEnabled(enabled);
         }
     }
     if (emergencyStopButton_ != nullptr) {
-        emergencyStopButton_->setEnabled(enabled);
+        emergencyStopButton_->setEnabled(serialConnected_);
+    }
+    if (clearEmergencyStopButton_ != nullptr) {
+        clearEmergencyStopButton_->setEnabled(
+            serialConnected_ && enabled && device_.emergencyLocked());
     }
 }
 
@@ -318,4 +376,36 @@ void MainWindow::handleTelemetryRateChanged(quint16 hz) {
 
 void MainWindow::handleCalibrationRequested() {
     device_.calibrateImu();
+}
+
+void MainWindow::handleTestUnlockStateChanged(bool unlocked,
+                                              qint64 remainingMs) {
+    if (actionPage_ != nullptr) {
+        actionPage_->setTestActionsEnabled(unlocked, remainingMs);
+    }
+}
+
+void MainWindow::handleEmergencyStateChanged(bool locked) {
+    if (actionPage_ != nullptr) {
+        actionPage_->setEmergencyLocked(locked);
+    }
+    if (clearEmergencyStopButton_ != nullptr) {
+        clearEmergencyStopButton_->setEnabled(
+            serialConnected_ && device_.handshakeComplete() && locked);
+    }
+    if (locked) {
+        connectionStatusLabel_->setText(QStringLiteral("急停锁定"));
+    } else if (device_.handshakeComplete()) {
+        connectionStatusLabel_->setText(QStringLiteral("设备已握手"));
+    }
+}
+
+void MainWindow::requestClearEmergencyStop() {
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this, QStringLiteral("确认解除急停"),
+        QStringLiteral("确认设备已静止并解除急停锁定吗？"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+        device_.clearEmergencyStop();
+    }
 }
