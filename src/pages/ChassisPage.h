@@ -43,6 +43,7 @@ private:
     static constexpr quint8 kImuGroup = 0x40;
 
     bool ownsGroup(quint8 group) const;
+    bool hasCompleteGroup(quint8 group) const;
     quint16 activePidId(int fieldOffset) const;
     QAbstractSpinBox *createSpinBox(const ParameterSpec &spec,
                                     const QString &objectName,

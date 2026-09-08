@@ -43,6 +43,25 @@ protocol::Frame capturedFrame(const QByteArray &bytes) {
     return frames.isEmpty() ? protocol::Frame{} : frames.front();
 }
 
+QVector<ParameterValue> pidPageValues(int firstIndex, int count) {
+    QVector<ParameterValue> values;
+    values.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        const int parameterIndex = firstIndex + index;
+        const int profile = parameterIndex / 5;
+        const int offset = parameterIndex % 5;
+        const quint16 id = static_cast<quint16>(
+            0x1000 + (parameterIndex / 5) * 0x10 + parameterIndex % 5);
+        const float value = offset == 0   ? static_cast<float>(profile + 1)
+                            : offset == 1 ? 0.5f + profile * 0.1f
+                            : offset == 2 ? static_cast<float>(profile + 2)
+                            : offset == 3 ? static_cast<float>(10 + profile)
+                                           : static_cast<float>(20 + profile);
+        values.push_back({id, ValueType::Float32, QVariant(value)});
+    }
+    return values;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -310,6 +329,34 @@ int main(int argc, char **argv) {
                  "handshake did not enable parameter actions")) {
         return 1;
     }
+
+    ChassisPage pidAggregationPage;
+    auto *pidAggregationRead =
+        pidAggregationPage.findChild<QPushButton *>("pidReadButton");
+    auto *pidAggregationRestore =
+        pidAggregationPage.findChild<QPushButton *>("restoreInitialButton");
+    auto *pidAggregationControl =
+        pidAggregationPage.findChild<QDoubleSpinBox *>("pidKpSpinBox");
+    if (!require(pidAggregationRead && pidAggregationRestore &&
+                     pidAggregationControl,
+                 "PID aggregation page controls are missing")) {
+        return 1;
+    }
+    pidAggregationPage.setConnected(true);
+    pidAggregationRead->click();
+    pidAggregationPage.setValues(pidPageValues(0, 18));
+    if (!require(!pidAggregationRestore->isEnabled() &&
+                     pidAggregationControl->value() == 0.0,
+                 "PID page zero was captured or refreshed prematurely")) {
+        return 1;
+    }
+    pidAggregationPage.setValues(pidPageValues(18, 7));
+    if (!require(pidAggregationRestore->isEnabled() &&
+                     pidAggregationControl->value() == 1.0,
+                 "complete PID pages did not refresh the page atomically")) {
+        return 1;
+    }
+
     chassis.setValues({
         {0x2000, ValueType::Int32, QVariant(qint32(12))},
         {0x2001, ValueType::Int32, QVariant(qint32(-4))},

@@ -71,7 +71,9 @@ private:
     void reportError(quint8 code, const QString &detail);
 
     void decodeHello(const QByteArray &payload);
-    void decodeParameterGroup(const QByteArray &payload);
+    void decodeParameterGroup(const QByteArray &payload,
+                              protocol::Command command);
+    void resetParameterGroupRead();
     void decodeImu(const QByteArray &payload);
     void decodePid(const QByteArray &payload);
     void decodeStatus(const QByteArray &payload);
@@ -101,6 +103,9 @@ private:
     quint8 clearEmergencyStopSequence_{};
     quint64 safetyGeneration_{};
     quint64 clearEmergencyStopGeneration_{};
+    bool pidGroupReadPending_{};
+    quint8 pidGroupPendingPage_{};
+    QVector<ParameterValue> pidGroupValues_;
     bool testsUnlocked_{};
     bool emergencyLocked_{};
     qint64 unlockDurationMs_{};

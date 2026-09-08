@@ -242,16 +242,22 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
         groupsInCall.insert(spec->group);
     }
 
+    QSet<quint8> completedGroups;
+    bool incompletePidRead = false;
     for (quint8 group : groupsInCall) {
         const bool isReadResponse =
             connected_ && pendingReadGroups_.contains(group) &&
             !pendingWriteGroups_.contains(group);
+        if (isReadResponse && group == kPidGroup &&
+            !hasCompleteGroup(group)) {
+            incompletePidRead = true;
+            continue;
+        }
         if (isReadResponse && !connectionInitialGroups_.contains(group)) {
-            for (const ParameterValue &value : values) {
-                const ParameterSpec *spec = catalog_.find(value.id);
-                if (spec != nullptr && spec->group == group &&
-                    ownsGroup(group) && spec->type == value.type) {
-                    connectionInitialValues_.insert(value.id, value);
+            for (const ParameterSpec &spec : catalog_.group(group)) {
+                const auto it = values_.constFind(spec.id);
+                if (it != values_.constEnd()) {
+                    connectionInitialValues_.insert(spec.id, *it);
                 }
             }
             connectionInitialGroups_.insert(group);
@@ -260,6 +266,7 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
         if (isReadResponse) {
             pendingReadGroups_.remove(group);
         }
+        completedGroups.insert(group);
     }
 
     for (const auto &[id, control] : controls_.asKeyValueRange()) {
@@ -268,9 +275,11 @@ void ChassisPage::setValues(const QVector<ParameterValue> &values) {
             applyValue(*it);
         }
     }
-    refreshPidControls();
+    if (!incompletePidRead) {
+        refreshPidControls();
+    }
     refreshRestoreButton();
-    if (!groupsInCall.isEmpty()) {
+    if (!completedGroups.isEmpty()) {
         setStatus(QStringLiteral("已读取设备 RAM 参数"));
     }
 }
@@ -286,6 +295,12 @@ void ChassisPage::handlePidProfileChanged(int) {
 
 void ChassisPage::readPid() {
     if (connected_) {
+        if (pendingReadGroups_.contains(kPidGroup)) {
+            return;
+        }
+        for (const ParameterSpec &spec : catalog_.group(kPidGroup)) {
+            values_.remove(spec.id);
+        }
         pendingWriteGroups_.remove(kPidGroup);
         pendingReadGroups_.insert(kPidGroup);
         emit readRequested(kPidGroup);
@@ -295,6 +310,11 @@ void ChassisPage::readPid() {
 
 void ChassisPage::writePid() {
     if (!connected_) {
+        return;
+    }
+    if (pendingReadGroups_.contains(kPidGroup) &&
+        !hasCompleteGroup(kPidGroup)) {
+        setStatus(QStringLiteral("正在等待完整 PID 参数…"));
         return;
     }
     const QVector<ParameterValue> values = collectGroup(kPidGroup);
@@ -369,6 +389,19 @@ void ChassisPage::restoreInitial() {
 
 bool ChassisPage::ownsGroup(quint8 group) const {
     return group == kPidGroup || group == kChassisGroup || group == kImuGroup;
+}
+
+bool ChassisPage::hasCompleteGroup(quint8 group) const {
+    const QVector<ParameterSpec> specs = catalog_.group(group);
+    if (specs.isEmpty()) {
+        return false;
+    }
+    for (const ParameterSpec &spec : specs) {
+        if (!values_.contains(spec.id)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 quint16 ChassisPage::activePidId(int fieldOffset) const {

@@ -70,6 +70,28 @@ QByteArray parameterResponsePayload(quint8 group, quint16 id, ValueType type,
     return payload;
 }
 
+QByteArray pidPagePayload(int firstIndex, int count) {
+    QByteArray payload;
+    payload.append(char(0x10));
+    payload.append(static_cast<char>(count));
+    for (int index = 0; index < count; ++index) {
+        const int parameterIndex = firstIndex + index;
+        const quint16 id = static_cast<quint16>(
+            0x1000 + (parameterIndex / 5) * 0x10 + parameterIndex % 5);
+        appendU16(&payload, id);
+        payload.append(static_cast<char>(ValueType::Float32));
+        const int profile = parameterIndex / 5;
+        const int offset = parameterIndex % 5;
+        const float value = offset == 0   ? static_cast<float>(profile + 1)
+                            : offset == 1 ? 0.5f + profile * 0.1f
+                            : offset == 2 ? static_cast<float>(profile + 2)
+                            : offset == 3 ? static_cast<float>(10 + profile)
+                                           : static_cast<float>(20 + profile);
+        payload.append(floatBytes(value));
+    }
+    return payload;
+}
+
 void feedResponse(ProtocolClient *protocol, const QByteArray &requestBytes,
                   protocol::Command command, const QByteArray &payload,
                   quint8 flags = protocol::Response) {
@@ -144,6 +166,80 @@ int main(int argc, char **argv) {
         !require(helloRequest.command ==
                      static_cast<quint8>(protocol::Command::Hello),
                  "HELLO command is incorrect")) {
+        return 1;
+    }
+
+    int aggregatedPidCount = 0;
+    QVector<ParameterValue> aggregatedPidValues;
+    QObject::connect(&device, &DeviceClient::parameterGroupReceived,
+                     [&](quint8 group, const QVector<ParameterValue> &values) {
+                         if (group == 0x10) {
+                             ++aggregatedPidCount;
+                             aggregatedPidValues = values;
+                         }
+                     });
+    requestBytes.clear();
+    if (!require(device.getParameterGroup(0x10),
+                 "PID parameter group request was not sent")) {
+        return 1;
+    }
+    const QByteArray pidPage0Request = requestBytes;
+    if (!require(capturedFrame(pidPage0Request).payload ==
+                     QByteArray::fromHex("10"),
+                 "PID page zero request payload is incorrect")) {
+        return 1;
+    }
+    if (!require(device.getParameterGroup(0x10),
+                 "duplicate PID parameter group request was rejected") ||
+        !require(requestBytes == pidPage0Request,
+                 "duplicate PID parameter group request was sent")) {
+        return 1;
+    }
+    feedResponse(&protocol, pidPage0Request, protocol::Command::GetParamGroup,
+                 pidPagePayload(0, 18));
+    if (!require(aggregatedPidCount == 0,
+                 "PID page zero was emitted before aggregation") ||
+        !require(capturedFrame(requestBytes).payload ==
+                     QByteArray::fromHex("10 01"),
+                 "PID page one request was not sent after page zero")) {
+        return 1;
+    }
+    const QByteArray pidPage1Request = requestBytes;
+    feedResponse(&protocol, pidPage1Request, protocol::Command::GetParamGroup,
+                 pidPagePayload(18, 7));
+    if (!require(aggregatedPidCount == 1 && aggregatedPidValues.size() == 25,
+                 "PID pages were not emitted as one complete group") ||
+        !require(aggregatedPidValues.front().id == 0x1000 &&
+                     aggregatedPidValues.back().id == 0x1044,
+                 "PID page aggregation changed parameter order")) {
+        return 1;
+    }
+
+    ProtocolClient incompletePidProtocol;
+    DeviceClient incompletePidDevice(&incompletePidProtocol);
+    QByteArray incompletePidRequest;
+    int incompletePidCount = 0;
+    int incompletePidErrors = 0;
+    QObject::connect(&incompletePidProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { incompletePidRequest = bytes; });
+    QObject::connect(&incompletePidDevice, &DeviceClient::parameterGroupReceived,
+                     [&](quint8 group, const QVector<ParameterValue> &) {
+                         if (group == 0x10) {
+                             ++incompletePidCount;
+                         }
+                     });
+    QObject::connect(&incompletePidDevice, &DeviceClient::deviceError,
+                     [&](const QString &) { ++incompletePidErrors; });
+    if (!require(incompletePidDevice.getParameterGroup(0x10),
+                 "incomplete PID parameter group request was not sent")) {
+        return 1;
+    }
+    feedResponse(&incompletePidProtocol, incompletePidRequest,
+                 protocol::Command::GetParamGroup, pidPagePayload(0, 17));
+    if (!require(incompletePidCount == 0,
+                 "an incomplete PID page was emitted as a complete group") ||
+        !require(incompletePidErrors == 1,
+                 "an incomplete PID page did not report an error")) {
         return 1;
     }
 
@@ -255,10 +351,15 @@ int main(int argc, char **argv) {
                          ++parameterGroupCount;
                      });
     requestBytes.clear();
-    device.getParameterGroup(0x10);
+    device.getParameterGroup(0x20);
+    if (!require(capturedFrame(requestBytes).payload ==
+                     QByteArray::fromHex("20"),
+                 "single-page parameter group request gained a page field")) {
+        return 1;
+    }
     feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
-                 parameterResponsePayload(0x10, 0x1000, ValueType::Float32,
-                                          floatBytes(1.5f)));
+                 parameterResponsePayload(0x20, 0x2000, ValueType::Int32,
+                                          QByteArray::fromHex("0c000000")));
     if (!require(parameterGroupCount == 1,
                  "a valid parameter readback was rejected")) {
         return 1;
@@ -272,20 +373,20 @@ int main(int argc, char **argv) {
     } invalidReadbacks[] = {
         {0x7fff, ValueType::Float32, floatBytes(1.5f),
          "unknown readback parameter was accepted"},
-        {0x2000, ValueType::Int32, QByteArray::fromHex("01000000"),
+        {0x1000, ValueType::Float32, floatBytes(1.5f),
          "readback parameter from another group was accepted"},
-        {0x1000, ValueType::UInt16, QByteArray::fromHex("0100"),
+        {0x2000, ValueType::UInt16, QByteArray::fromHex("0100"),
          "readback type mismatch was accepted"},
-        {0x1000, ValueType::Float32, floatBytes(21.0f),
+        {0x2000, ValueType::Int32, QByteArray::fromHex("51000000"),
          "out-of-range readback parameter was accepted"},
     };
     for (const auto &invalid : invalidReadbacks) {
         requestBytes.clear();
-        device.getParameterGroup(0x10);
+        device.getParameterGroup(0x20);
         const int groupsBefore = parameterGroupCount;
         const int errorsBefore = deviceErrorCount;
         feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
-                     parameterResponsePayload(0x10, invalid.id, invalid.type,
+                     parameterResponsePayload(0x20, invalid.id, invalid.type,
                                               invalid.value));
         if (!require(parameterGroupCount == groupsBefore, invalid.message) ||
             !require(deviceErrorCount == errorsBefore + 1,
@@ -295,10 +396,10 @@ int main(int argc, char **argv) {
     }
 
     requestBytes.clear();
-    device.getParameterGroup(0x10);
+    device.getParameterGroup(0x20);
     const int truncatedErrorsBefore = deviceErrorCount;
     feedResponse(&protocol, requestBytes, protocol::Command::GetParamGroup,
-                 parameterResponsePayload(0x10, 0x1000, ValueType::Float32,
+                 parameterResponsePayload(0x20, 0x2000, ValueType::Int32,
                                           QByteArray::fromHex("0000")));
     if (!require(deviceErrorCount == truncatedErrorsBefore + 1,
                  "truncated typed value did not report an error") ||

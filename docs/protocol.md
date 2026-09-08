@@ -33,7 +33,7 @@ payload 的第一个字节是 `error:u8`。
 | --- | ---: | --- | --- |
 | `HELLO` | `0x01` | 空 | `protocol:u8 fw_major:u8 fw_minor:u8 fw_patch:u8 capabilities:u32` |
 | `GET_STATUS` | `0x02` | 空 | `mode:u8 emergency:u8 unlocked:u8 active_link:u8 last_error:u16` |
-| `GET_PARAM_GROUP` | `0x10` | `group:u8` | `group:u8 count:u8 [id:u16 type:u8 value:typed] * count` |
+| `GET_PARAM_GROUP` | `0x10` | `group:u8 [page:u8]` | `group:u8 count:u8 [id:u16 type:u8 value:typed] * count` |
 | `SET_PARAM_GROUP` | `0x11` | `group:u8 count:u8 [id:u16 type:u8 value:typed] * count` | `group:u8 count:u8 [id:u16 type:u8 applied_value:typed] * count` |
 | `SET_TELEMETRY` | `0x20` | `mask:u8 period_ms:u16` | `accepted_mask:u8 actual_period_ms:u16` |
 | `IMU_CALIBRATE` | `0x21` | 空 | `state:u8` |
@@ -49,6 +49,12 @@ payload 的第一个字节是 `error:u8`。
 `IMU_CALIBRATE` 的 `state` 为 `0=started`、`1=completed`、`2=failed`。设备支持
 的遥测 mask 由固件定义；9600 baud 链路的 IMU 频率范围为 1–20 Hz，115200 baud
 链路为 1–50 Hz，设备在响应中返回实际采用周期。
+
+`GET_PARAM_GROUP` 的 `page` 为可选的从 0 开始的分页号；省略时等同于 `page=0`。
+单帧最多承载 18 条参数记录（响应仍使用原有的 `group:u8 count:u8` 记录布局）。
+PID 组 `0x10` 共 25 条记录，因此 `page=0` 返回目录中的前 18 条、`page=1` 返回后 7 条；
+上位机必须在两页均完整且顺序正确后，再发出一次完整的参数组通知。能够在单帧容纳的
+其他参数组继续使用省略 `page` 的单页请求。
 
 ## 错误码
 

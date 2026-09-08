@@ -10,6 +10,8 @@ namespace {
 constexpr int kImuPayloadWithTimestamp = 4 + 9 * 2;
 constexpr int kPidPayloadSize = 4 + 3 * 2;
 constexpr quint16 kTestUnlockDurationMs = 30000;
+constexpr quint8 kPidParameterGroup = 0x10;
+constexpr int kPidPageItemCount = 18;
 
 enum class TypedDecodeResult {
     Ok,
@@ -214,8 +216,10 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
     helloPending_ = false;
+    resetParameterGroupRead();
     if (protocol_ != nullptr) {
         protocol_->cancelPending(protocol::Command::Hello);
+        protocol_->cancelPending(protocol::Command::GetParamGroup);
     }
     failClosed();
     if (protocol_ == nullptr) {
@@ -237,6 +241,20 @@ bool DeviceClient::getStatus() {
 bool DeviceClient::getParameterGroup(quint8 group) {
     if (catalog_.group(group).isEmpty()) {
         return reject(QStringLiteral("参数组不存在"), 0x05);
+    }
+    if (group == kPidParameterGroup) {
+        if (pidGroupReadPending_) {
+            return true;
+        }
+        pidGroupReadPending_ = true;
+        pidGroupPendingPage_ = 0;
+        pidGroupValues_.clear();
+        if (!send(protocol::Command::GetParamGroup,
+                  QByteArray(1, static_cast<char>(group)))) {
+            resetParameterGroupRead();
+            return false;
+        }
+        return true;
     }
     return send(protocol::Command::GetParamGroup,
                 QByteArray(1, static_cast<char>(group)));
@@ -633,6 +651,10 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
         clearEmergencyStopPending_ = false;
     }
     if ((frame.flags & protocol::Error) != 0) {
+        if (frame.command ==
+            static_cast<quint8>(protocol::Command::GetParamGroup)) {
+            resetParameterGroupRead();
+        }
         decodeResponseError(frame.payload);
         return;
     }
@@ -644,8 +666,10 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
         decodeStatusResponse(frame.payload);
         break;
     case protocol::Command::GetParamGroup:
+        decodeParameterGroup(frame.payload, protocol::Command::GetParamGroup);
+        break;
     case protocol::Command::SetParamGroup:
-        decodeParameterGroup(frame.payload);
+        decodeParameterGroup(frame.payload, protocol::Command::SetParamGroup);
         break;
     case protocol::Command::SetTelemetry:
         decodeTelemetryConfiguration(frame.payload);
@@ -685,6 +709,7 @@ void DeviceClient::handleEvent(protocol::Frame frame) {
 }
 
 void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
+    resetParameterGroupRead();
     if (helloPending_ && sequence == helloSequence_) {
         helloPending_ = false;
         handshakeComplete_ = false;
@@ -704,6 +729,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
 void DeviceClient::handleConnectionCleared() {
     handshakeComplete_ = false;
     helloPending_ = false;
+    resetParameterGroupRead();
     failClosed();
 }
 
@@ -731,15 +757,26 @@ void DeviceClient::decodeHello(const QByteArray &payload) {
     emit handshakeCompleted(info);
 }
 
-void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
+void DeviceClient::resetParameterGroupRead() {
+    pidGroupReadPending_ = false;
+    pidGroupPendingPage_ = 0;
+    pidGroupValues_.clear();
+}
+
+void DeviceClient::decodeParameterGroup(const QByteArray &payload,
+                                        protocol::Command command) {
+    const auto fail = [this](quint8 code, const QString &detail) {
+        resetParameterGroupRead();
+        reportError(code, detail);
+    };
     if (payload.size() < 2) {
-        reportError(0x04, QStringLiteral("参数组响应长度错误"));
+        fail(0x04, QStringLiteral("参数组响应长度错误"));
         return;
     }
     const quint8 group = static_cast<quint8>(payload.at(0));
     const quint8 count = static_cast<quint8>(payload.at(1));
     if (catalog_.group(group).isEmpty()) {
-        reportError(0x05, QStringLiteral("参数组不存在"));
+        fail(0x05, QStringLiteral("参数组不存在"));
         return;
     }
     int offset = 2;
@@ -747,7 +784,7 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
     values.reserve(count);
     for (int index = 0; index < count; ++index) {
         if (offset + 3 > payload.size()) {
-            reportError(0x04, QStringLiteral("参数组项目头长度错误"));
+            fail(0x04, QStringLiteral("参数组项目头长度错误"));
             return;
         }
         const quint16 id = readU16(payload, offset);
@@ -758,25 +795,25 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
         const TypedDecodeResult decodeResult =
             decodeTypedValue(payload, &offset, type, &value);
         if (decodeResult == TypedDecodeResult::Truncated) {
-            reportError(0x04, QStringLiteral("参数组项目值长度错误"));
+            fail(0x04, QStringLiteral("参数组项目值长度错误"));
             return;
         }
         if (decodeResult != TypedDecodeResult::Ok) {
-            reportError(0x06, QStringLiteral("参数组项目类型错误"));
+            fail(0x06, QStringLiteral("参数组项目类型错误"));
             return;
         }
 
         const ParameterSpec *spec = catalog_.find(id);
         if (spec == nullptr) {
-            reportError(0x05, QStringLiteral("参数不存在"));
+            fail(0x05, QStringLiteral("参数不存在"));
             return;
         }
         if (spec->group != group) {
-            reportError(0x05, QStringLiteral("参数不属于该参数组"));
+            fail(0x05, QStringLiteral("参数不属于该参数组"));
             return;
         }
         if (spec->type != type) {
-            reportError(0x06, QStringLiteral("参数类型错误"));
+            fail(0x06, QStringLiteral("参数类型错误"));
             return;
         }
         QString validationError;
@@ -784,14 +821,64 @@ void DeviceClient::decodeParameterGroup(const QByteArray &payload) {
             const quint8 code = validationError.contains(QStringLiteral("0x07"))
                 ? 0x07
                 : validationError.contains(QStringLiteral("0x06")) ? 0x06 : 0x05;
-            reportError(code, validationError);
+            fail(code, validationError);
             return;
         }
         values.push_back(ParameterValue{id, type, value});
     }
     if (offset != payload.size()) {
-        reportError(0x04, QStringLiteral("参数组响应包含多余数据"));
+        fail(0x04, QStringLiteral("参数组响应包含多余数据"));
         return;
+    }
+
+    if (command == protocol::Command::GetParamGroup &&
+        group == kPidParameterGroup && pidGroupReadPending_) {
+        const QVector<ParameterSpec> specs = catalog_.group(group);
+        const int expectedCount = specs.size();
+        const auto pageMatchesCatalog = [&values, &specs](int firstIndex) {
+            for (int index = 0; index < values.size(); ++index) {
+                if (firstIndex + index >= specs.size() ||
+                    values.at(index).id != specs.at(firstIndex + index).id) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (pidGroupPendingPage_ == 0) {
+            if (expectedCount <= kPidPageItemCount ||
+                values.size() != kPidPageItemCount ||
+                !pageMatchesCatalog(0)) {
+                fail(0x04, QStringLiteral("PID 参数第 0 页内容错误"));
+                return;
+            }
+            pidGroupValues_ = values;
+            pidGroupPendingPage_ = 1;
+            QByteArray pageRequest;
+            pageRequest.append(static_cast<char>(group));
+            pageRequest.append(static_cast<char>(pidGroupPendingPage_));
+            if (!send(protocol::Command::GetParamGroup, pageRequest)) {
+                resetParameterGroupRead();
+                return;
+            }
+            return;
+        }
+        if (pidGroupPendingPage_ == 1) {
+            const int expectedPageCount = expectedCount - kPidPageItemCount;
+            if (expectedPageCount <= 0 ||
+                values.size() != expectedPageCount ||
+                !pageMatchesCatalog(kPidPageItemCount)) {
+                fail(0x04, QStringLiteral("PID 参数第 1 页内容错误"));
+                return;
+            }
+            pidGroupValues_ += values;
+            if (pidGroupValues_.size() != expectedCount) {
+                fail(0x04, QStringLiteral("PID 参数分页数量错误"));
+                return;
+            }
+            values = pidGroupValues_;
+            resetParameterGroupRead();
+        }
     }
     emit parameterGroupReceived(group, values);
 }
