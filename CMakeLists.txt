@@ -214,6 +214,34 @@ set_target_properties(test_stm32_armcc_headers PROPERTIES
     LINKER_LANGUAGE C
 )
 
+option(TASK12_ENABLE_HOST_STUB_COMPILE
+    "Build the optional Task 12 host stub compile probe" OFF)
+if(TASK12_ENABLE_HOST_STUB_COMPILE)
+    add_executable(test_task12_host_compile
+        tests/test_task12_host_compile.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_crc16.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_frame.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_link.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_params.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_safety.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_commands.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_uart3.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_time.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_debug.c
+    )
+    target_include_directories(test_task12_host_compile PRIVATE
+        ${STM32_HOST_PROTOCOL_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/stubs/task12
+    )
+    set_target_properties(test_task12_host_compile PROPERTIES
+        AUTOMOC OFF
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        LINKER_LANGUAGE C
+    )
+endif()
+
 add_executable(test_pid_profile_baseline
     tests/test_pid_profile_baseline.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/Hardware/pid.c
@@ -278,4 +306,6 @@ set_tests_properties(test_telemetry_plot PROPERTIES
 )
 add_test(NAME test_stm32_protocol COMMAND test_stm32_protocol)
 add_test(NAME test_stm32_armcc_headers COMMAND test_stm32_armcc_headers)
+add_test(NAME test_task12_host_static
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/task12_static_test.cmake)
 add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)
