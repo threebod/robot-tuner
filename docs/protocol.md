@@ -15,6 +15,19 @@ length:u16_le | payload:length | crc16:u16_le
 覆盖 `version` 到 payload 的全部字节，算法为 CRC-16/CCITT-FALSE（初值 `0xFFFF`，
 多项式 `0x1021`，不反射，结果不异或）。请求方递增 `sequence`；响应沿用请求序号。
 
+## 握手、链路与调试模式
+
+上位机连接后应先发送 `HELLO`，确认响应中的 `protocol=1`，再读取参数、订阅遥测或
+请求调试动作。当前 STM32 `host_protocol` 的 `capabilities` 为 `0`，能力位保留，不能
+据此假设尚未声明的硬件功能。
+
+设备以收到的第一条合法协议帧确定 `active_link`（USB 或 Bluetooth）；参数写入、遥测、
+校准、解锁、动作、停止和急停等受控命令必须来自该链路，另一链路返回 `BUSY`。设备重启
+后重新选择链路，运行中不会自动切换。`GET_STATUS` 响应中的 `active_link` 为当前链路枚举值。
+
+固件 `HOST_DEBUG_MODE=1` 时运行本协议调试入口；设为 `0` 时不启动该入口并回到原有主
+循环。该宏由固件构建配置决定，不是帧字段或上位机运行时选项。
+
 ### flags
 
 | 标志 | 值 | 含义 |

@@ -1,8 +1,11 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.22)
 
 project(robot_tuner LANGUAGES C CXX)
 
 set(CMAKE_AUTOMOC ON)
+# Keep moc worker count deterministic on Windows.  Historical clean builds
+# intermittently crashed with 0xC0000005 while several autogen workers ran.
+set(CMAKE_AUTOGEN_PARALLEL 1)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -172,6 +175,28 @@ add_executable(test_device_client
 target_include_directories(test_device_client PRIVATE src)
 target_link_libraries(test_device_client PRIVATE Qt6::Core)
 
+add_executable(test_end_to_end
+    tests/test_end_to_end.cpp
+    tests/support/FakeDevice.cpp
+    tests/support/FakeDevice.h
+    src/device/DeviceClient.cpp
+    src/device/DeviceClient.h
+    src/device/ParameterCatalog.cpp
+    src/device/ParameterCatalog.h
+    src/device/TelemetryTypes.h
+    src/protocol/Crc16.cpp
+    src/protocol/Crc16.h
+    src/protocol/FrameCodec.cpp
+    src/protocol/FrameCodec.h
+    src/protocol/FrameParser.cpp
+    src/protocol/FrameParser.h
+    src/protocol/ProtocolClient.cpp
+    src/protocol/ProtocolClient.h
+    src/protocol/ProtocolTypes.h
+)
+target_include_directories(test_end_to_end PRIVATE src tests)
+target_link_libraries(test_end_to_end PRIVATE Qt6::Core)
+
 add_executable(test_telemetry_plot
     tests/test_telemetry_plot.cpp
     src/widgets/TelemetryPlot.cpp
@@ -298,6 +323,10 @@ set_tests_properties(test_parameter_catalog PROPERTIES
 )
 add_test(NAME test_device_client COMMAND test_device_client)
 set_tests_properties(test_device_client PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_end_to_end COMMAND test_end_to_end)
+set_tests_properties(test_end_to_end PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
 add_test(NAME test_telemetry_plot COMMAND test_telemetry_plot)
