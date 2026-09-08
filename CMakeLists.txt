@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(robot_tuner LANGUAGES CXX)
+project(robot_tuner LANGUAGES C CXX)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -180,6 +180,22 @@ add_executable(test_telemetry_plot
 target_include_directories(test_telemetry_plot PRIVATE src)
 target_link_libraries(test_telemetry_plot PRIVATE Qt6::Widgets)
 
+set(STM32_HOST_PROTOCOL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/host_protocol")
+add_executable(test_stm32_protocol
+    tests/test_stm32_protocol.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_crc16.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_frame.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_link.c
+)
+target_include_directories(test_stm32_protocol PRIVATE ${STM32_HOST_PROTOCOL_DIR})
+set_target_properties(test_stm32_protocol PROPERTIES
+    AUTOMOC OFF
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    LINKER_LANGUAGE C
+)
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
@@ -215,3 +231,4 @@ set_tests_properties(test_telemetry_plot PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
+add_test(NAME test_stm32_protocol COMMAND test_stm32_protocol)
