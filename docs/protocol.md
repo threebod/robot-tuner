@@ -63,10 +63,10 @@ payload 的第一个字节是 `error:u8`。
 | `PID_TELEMETRY` | `0x82` | 事件 | `timestamp_ms:u32 target_cdeg:i16 actual_cdeg:i16 output_centi:i16` |
 
 `IMU_CALIBRATE` 的 `state` 为 `0=started`、`1=completed`、`2=failed`。设备支持
-的遥测 mask 由固件定义；9600 baud 链路的 IMU 频率范围为 1–20 Hz，115200 baud
-链路为 1–50 Hz，设备在响应中返回实际采用周期。RAM 参数 `0x4000` 是实际 IMU/遥测
-频率的上限配置，`SET_TELEMETRY` 响应中的 `actual_period_ms` 由该配置（再按链路能力
-限幅）计算，不能仅把请求 period 当作固件实际频率。
+的遥测 mask 由固件定义；USB 和 HC-05 链路均使用 115200 baud，IMU 频率范围均为
+1–50 Hz，设备在响应中返回实际采用周期。RAM 参数 `0x4000` 是实际 IMU/遥测频率的
+上限配置，`SET_TELEMETRY` 响应中的 `actual_period_ms` 由该配置限幅后计算，不能仅把
+请求 period 当作固件实际频率。
 
 `GET_PARAM_GROUP` 的 `page` 为可选的从 0 开始的分页号；省略时等同于 `page=0`。
 单帧最多承载 18 条参数记录（响应仍使用原有的 `group:u8 count:u8` 记录布局）。
@@ -161,6 +161,7 @@ PID 组 `0x10` 共 25 条记录，因此 `page=0` 返回目录中的前 18 条�
 | `0x12` turret | `action:u8 target_angle:f32 interpolation_speed:f32` |
 | `0x20` platform named position | `action:u8 position:u8`，position 为 1..3 |
 | `0x21` gripper named state | `action:u8 state:u8`，0=close、1=open |
+| `0x22` servo target | `action:u8 servo_id:u8 target_angle_deg:u16`，servo 2/3 为 0..270°，servo 4 为 0..360° |
 
 动作测试必须先 `TEST_UNLOCK`；设备端解锁时长固定为 30000 ms。底盘参数组 `0x20` 的
 速度限值按绝对值解释（写入 0 即禁止该轴动作），点动时长是动作安全上限，`0x2004`

@@ -638,6 +638,69 @@ int main(void)
         }
 
         {
+            const HostSafetyCallbacks safety_callbacks = {
+                fake_stop,
+                fake_emergency_stop
+            };
+            const HostCommandCallbacks command_callbacks = { 0 };
+            HostFrame hello_request = { 0 };
+            HostFrame telemetry_request = { 0 };
+            HostFrame response = { 0 };
+            HostParamGroup runtime_update = { 0 };
+
+            runtime_update.group = 0x40u;
+            runtime_update.count = 1u;
+            runtime_update.items[0].id = 0x4000u;
+            runtime_update.items[0].type = HOST_PARAM_UINT16;
+            runtime_update.items[0].value.u16 = 50u;
+            if (!require_condition(HostParam_SetGroupAtomic(&runtime_update) ==
+                                       HOST_ERROR_NONE,
+                                   "50 Hz IMU runtime setting was rejected")) {
+                return 1;
+            }
+            HostSafety_Init(&safety_callbacks);
+            HostCommands_Init(&command_callbacks);
+            hello_request.version = HOST_PROTOCOL_VERSION;
+            hello_request.flags = HOST_FLAG_REQUEST;
+            hello_request.command = HOST_COMMAND_HELLO;
+            if (!require_condition(HostCommands_Handle(&hello_request,
+                                                        &response,
+                                                        HOST_LINK_BLUETOOTH,
+                                                        2000u) ==
+                                       HOST_ERROR_NONE,
+                                   "Bluetooth HELLO was rejected")) {
+                return 1;
+            }
+            telemetry_request.version = HOST_PROTOCOL_VERSION;
+            telemetry_request.flags = HOST_FLAG_REQUEST;
+            telemetry_request.command = HOST_COMMAND_SET_TELEMETRY;
+            telemetry_request.length = 3u;
+            telemetry_request.payload[0] = 0x07u;
+            write_u16(&telemetry_request.payload[1], 20u);
+            if (!require_condition(HostCommands_Handle(&telemetry_request,
+                                                        &response,
+                                                        HOST_LINK_BLUETOOTH,
+                                                        2000u) ==
+                                       HOST_ERROR_NONE,
+                                   "Bluetooth 20 ms telemetry request was rejected") ||
+                !require_condition(response.payload[1] == 20u &&
+                                       response.payload[2] == 0u,
+                                   "Bluetooth telemetry rate was not 50 Hz")) {
+                return 1;
+            }
+            HostSafety_Init(&safety_callbacks);
+            HostCommands_Init(&command_callbacks);
+            if (!require_condition(HostCommands_Handle(&hello_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        3000u) ==
+                                       HOST_ERROR_NONE,
+                                   "USB HELLO could not restore the test link")) {
+                return 1;
+            }
+        }
+
+        {
             HostFrame get_pid_request = { 0 };
             HostFrame get_pid_page_request = { 0 };
 

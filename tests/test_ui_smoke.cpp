@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -37,6 +38,20 @@ bool require(bool condition, const char *message) {
         std::cerr << message << '\n';
     }
     return condition;
+}
+
+void acceptNextConfirmation() {
+    QTimer::singleShot(0, [] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (box != nullptr) {
+            if (auto *yesButton = box->button(QMessageBox::Yes);
+                yesButton != nullptr) {
+                yesButton->click();
+            } else {
+                box->done(QMessageBox::Yes);
+            }
+        }
+    });
 }
 
 protocol::Frame capturedFrame(const QByteArray &bytes) {
@@ -162,7 +177,8 @@ int main(int argc, char **argv) {
                      imuTelemetryRate->maximum() == 50 &&
                      !imuTelemetryRate->isEnabled(),
                  "IMU telemetry rate control is invalid") ||
-        !require(baudCombo->count() == 2 &&
+        !require(baudCombo->count() == 1 &&
+                     baudCombo->currentData().toInt() == 115200 &&
                      connectionStatusLabel->text() == QStringLiteral("未连接"),
                  "connection defaults changed") ||
         !require(pidProfile && pidProfile->count() == 5,
@@ -587,8 +603,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     imu.setLinkBaudRate(9600);
-    if (!require(imuRateControl->maximum() == 20,
-                 "9600-baud IMU rate was not limited to 20 Hz")) {
+    if (!require(imuRateControl->maximum() == 50,
+                 "IMU rate range was not kept at 50 Hz")) {
         return 1;
     }
     imu.setTelemetryConfiguration(0x07, 25);
@@ -673,6 +689,64 @@ int main(int argc, char **argv) {
     mechanism.setValues(mechanismValues);
     if (!require(mechanismRestore->isEnabled(),
                  "a requested mechanism read did not create connection initial values")) {
+        return 1;
+    }
+
+    ActionTestPage standaloneActionPage;
+    standaloneActionPage.setConnected(true);
+    standaloneActionPage.setTestActionsEnabled(true, 30000);
+    standaloneActionPage.show();
+    QApplication::processEvents();
+    auto *forwardButton =
+        standaloneActionPage.findChild<QPushButton *>("chassisForwardButton");
+    auto *backwardButton =
+        standaloneActionPage.findChild<QPushButton *>("chassisBackwardButton");
+    auto *leftButton =
+        standaloneActionPage.findChild<QPushButton *>("chassisLeftButton");
+    auto *rightButton =
+        standaloneActionPage.findChild<QPushButton *>("chassisRightButton");
+    qint32 directionVx = 0;
+    qint32 directionVy = 0;
+    qint32 directionW = 0;
+    int directionCalls = 0;
+    QObject::connect(&standaloneActionPage, &ActionTestPage::chassisRequested,
+                     [&](qint32 vxValue, qint32 vyValue, qint32 wValue,
+                         qint32) {
+                         ++directionCalls;
+                         directionVx = vxValue;
+                         directionVy = vyValue;
+                         directionW = wValue;
+                     });
+    if (!require(forwardButton && backwardButton && leftButton && rightButton &&
+                     forwardButton->isEnabled() && backwardButton->isEnabled() &&
+                     leftButton->isEnabled() && rightButton->isEnabled(),
+                 "mecanum direction buttons are missing")) {
+        return 1;
+    }
+    acceptNextConfirmation();
+    forwardButton->click();
+    if (!require(directionCalls == 1,
+                 "forward direction confirmation did not emit an action") ||
+        !require(directionVx == 0 && directionVy == 80 && directionW == 0,
+                 "forward direction vector is incorrect")) {
+        return 1;
+    }
+    acceptNextConfirmation();
+    backwardButton->click();
+    if (!require(directionVx == 0 && directionVy == -80 && directionW == 0,
+                 "backward direction vector is incorrect")) {
+        return 1;
+    }
+    acceptNextConfirmation();
+    leftButton->click();
+    if (!require(directionVx == -80 && directionVy == 0 && directionW == 0,
+                 "left direction vector is incorrect")) {
+        return 1;
+    }
+    acceptNextConfirmation();
+    rightButton->click();
+    if (!require(directionVx == 80 && directionVy == 0 && directionW == 0,
+                 "right direction vector is incorrect")) {
         return 1;
     }
     return 0;

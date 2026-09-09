@@ -95,13 +95,13 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
         actionWidgets_.push_back(button);
     };
     addDirection(QStringLiteral("前进"), QStringLiteral("chassisForwardButton"),
-                 80, 0, 0);
-    addDirection(QStringLiteral("后退"), QStringLiteral("chassisBackwardButton"),
-                 -80, 0, 0);
-    addDirection(QStringLiteral("左移"), QStringLiteral("chassisLeftButton"),
                  0, 80, 0);
-    addDirection(QStringLiteral("右移"), QStringLiteral("chassisRightButton"),
+    addDirection(QStringLiteral("后退"), QStringLiteral("chassisBackwardButton"),
                  0, -80, 0);
+    addDirection(QStringLiteral("左移"), QStringLiteral("chassisLeftButton"),
+                 -80, 0, 0);
+    addDirection(QStringLiteral("右移"), QStringLiteral("chassisRightButton"),
+                 80, 0, 0);
     addDirection(QStringLiteral("左转"), QStringLiteral("chassisTurnLeftButton"),
                  0, 0, 30);
     addDirection(QStringLiteral("右转"), QStringLiteral("chassisTurnRightButton"),

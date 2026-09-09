@@ -52,9 +52,7 @@ MainWindow::MainWindow(QWidget *parent)
     portCombo_->setObjectName("portCombo");
     baudCombo_ = new QComboBox(centralWidget);
     baudCombo_->setObjectName("baudCombo");
-    baudCombo_->addItem(QStringLiteral("9600"), 9600);
     baudCombo_->addItem(QStringLiteral("115200"), 115200);
-    baudCombo_->setCurrentIndex(1);
 
     refreshPortsButton_ = new QPushButton("刷新串口", centralWidget);
     refreshPortsButton_->setObjectName("refreshPortsButton");

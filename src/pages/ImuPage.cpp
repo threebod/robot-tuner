@@ -305,7 +305,7 @@ void ImuPage::setAbnormal(const QString &message) {
 }
 
 void ImuPage::updateRateRange() {
-    maximumRate_ = baudRate_ == 9600 ? 20 : 50;
+    maximumRate_ = 50;
     const QSignalBlocker blocker(rateSpinBox_);
     rateSpinBox_->setRange(1, maximumRate_);
     if (rateSpinBox_->value() > maximumRate_) {
