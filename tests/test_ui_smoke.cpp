@@ -11,6 +11,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
 #include <QWidget>
@@ -49,6 +50,20 @@ void acceptNextConfirmation() {
                 yesButton->click();
             } else {
                 box->done(QMessageBox::Yes);
+            }
+        }
+    });
+}
+
+void rejectNextConfirmation() {
+    QTimer::singleShot(0, [] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (box != nullptr) {
+            if (auto *noButton = box->button(QMessageBox::No);
+                noButton != nullptr) {
+                noButton->click();
+            } else {
+                box->done(QMessageBox::No);
             }
         }
     });
@@ -104,6 +119,22 @@ int main(int argc, char **argv) {
         window.findChild<QSpinBox *>("testChassisVxSpinBox");
     auto *actionHorizontalTarget =
         window.findChild<QDoubleSpinBox *>("testHorizontalTargetSpinBox");
+    auto *servo2Slider = window.findChild<QSlider *>("servo2Slider");
+    auto *servo2Angle =
+        window.findChild<QSpinBox *>("servo2AngleSpinBox");
+    auto *servo2Send =
+        window.findChild<QPushButton *>("servo2SendButton");
+    auto *servo3Slider = window.findChild<QSlider *>("servo3Slider");
+    auto *servo3Angle =
+        window.findChild<QSpinBox *>("servo3AngleSpinBox");
+    auto *servo3Send =
+        window.findChild<QPushButton *>("servo3SendButton");
+    auto *servo4Slider = window.findChild<QSlider *>("servo4Slider");
+    auto *servo4Angle =
+        window.findChild<QSpinBox *>("servo4AngleSpinBox");
+    auto *servo4Send =
+        window.findChild<QPushButton *>("servo4SendButton");
+    auto *servoLog = window.findChild<QListWidget *>("servoActionLog");
     auto *terminalPage = window.findChild<TerminalPage *>();
     auto *terminalMode =
         window.findChild<QComboBox *>("terminalDisplayModeCombo");
@@ -153,6 +184,29 @@ int main(int argc, char **argv) {
                  "parameter pages must be disabled before handshake") ||
         !require(actionPage && !actionPage->isEnabled(),
                  "action page must stay disabled before handshake") ||
+        !require(servo2Slider && servo2Angle && servo2Send &&
+                     servo3Slider && servo3Angle && servo3Send &&
+                     servo4Slider && servo4Angle && servo4Send && servoLog,
+                 "servo controls or target log are missing") ||
+        !require(servo2Slider->minimum() == 0 &&
+                     servo2Slider->maximum() == 270 &&
+                     servo2Angle->minimum() == 0 &&
+                     servo2Angle->maximum() == 270 &&
+                     servo3Slider->minimum() == 0 &&
+                     servo3Slider->maximum() == 270 &&
+                     servo3Angle->minimum() == 0 &&
+                     servo3Angle->maximum() == 270 &&
+                     servo4Slider->minimum() == 0 &&
+                     servo4Slider->maximum() == 360 &&
+                     servo4Angle->minimum() == 0 &&
+                     servo4Angle->maximum() == 360,
+                 "servo angle ranges are invalid") ||
+        !require(!servo2Slider->isEnabled() && !servo2Angle->isEnabled() &&
+                     !servo2Send->isEnabled() && !servo3Slider->isEnabled() &&
+                     !servo3Angle->isEnabled() && !servo3Send->isEnabled() &&
+                     !servo4Slider->isEnabled() && !servo4Angle->isEnabled() &&
+                     !servo4Send->isEnabled(),
+                 "servo controls must start disabled") ||
         !require(actionUnlock && actionChassis && !actionUnlock->isEnabled() &&
                       !actionChassis->isEnabled() && actionChassisVx &&
                       !actionChassisVx->isEnabled() && actionHorizontalTarget &&
@@ -352,6 +406,11 @@ int main(int argc, char **argv) {
     device->emergencyStop();
     if (!require(!actionChassis->isEnabled() && !actionChassisVx->isEnabled() &&
                       !actionHorizontalTarget->isEnabled() &&
+                      !servo2Slider->isEnabled() && !servo2Angle->isEnabled() &&
+                      !servo2Send->isEnabled() && !servo3Slider->isEnabled() &&
+                      !servo3Angle->isEnabled() && !servo3Send->isEnabled() &&
+                      !servo4Slider->isEnabled() && !servo4Angle->isEnabled() &&
+                      !servo4Send->isEnabled() &&
                       !heartbeatTimer->isActive(),
                   "emergency stop did not disable action controls or heartbeat")) {
         return 1;
@@ -705,6 +764,26 @@ int main(int argc, char **argv) {
         standaloneActionPage.findChild<QPushButton *>("chassisLeftButton");
     auto *rightButton =
         standaloneActionPage.findChild<QPushButton *>("chassisRightButton");
+    auto *standaloneServo2Slider =
+        standaloneActionPage.findChild<QSlider *>("servo2Slider");
+    auto *standaloneServo2Angle =
+        standaloneActionPage.findChild<QSpinBox *>("servo2AngleSpinBox");
+    auto *standaloneServo2Send =
+        standaloneActionPage.findChild<QPushButton *>("servo2SendButton");
+    auto *standaloneServo3Slider =
+        standaloneActionPage.findChild<QSlider *>("servo3Slider");
+    auto *standaloneServo3Angle =
+        standaloneActionPage.findChild<QSpinBox *>("servo3AngleSpinBox");
+    auto *standaloneServo3Send =
+        standaloneActionPage.findChild<QPushButton *>("servo3SendButton");
+    auto *standaloneServo4Slider =
+        standaloneActionPage.findChild<QSlider *>("servo4Slider");
+    auto *standaloneServo4Angle =
+        standaloneActionPage.findChild<QSpinBox *>("servo4AngleSpinBox");
+    auto *standaloneServo4Send =
+        standaloneActionPage.findChild<QPushButton *>("servo4SendButton");
+    auto *standaloneServoLog =
+        standaloneActionPage.findChild<QListWidget *>("servoActionLog");
     qint32 directionVx = 0;
     qint32 directionVy = 0;
     qint32 directionW = 0;
@@ -718,9 +797,58 @@ int main(int argc, char **argv) {
                          directionW = wValue;
                      });
     if (!require(forwardButton && backwardButton && leftButton && rightButton &&
+                     standaloneServo2Slider && standaloneServo2Angle &&
+                     standaloneServo2Send && standaloneServo3Slider &&
+                     standaloneServo3Angle && standaloneServo3Send &&
+                     standaloneServo4Slider && standaloneServo4Angle &&
+                     standaloneServo4Send && standaloneServoLog &&
                      forwardButton->isEnabled() && backwardButton->isEnabled() &&
                      leftButton->isEnabled() && rightButton->isEnabled(),
                  "mecanum direction buttons are missing")) {
+        return 1;
+    }
+    standaloneServo2Slider->setValue(120);
+    standaloneServo3Slider->setValue(125);
+    standaloneServo4Slider->setValue(240);
+    if (!require(standaloneServo2Angle->value() == 120 &&
+                     standaloneServo3Angle->value() == 125 &&
+                     standaloneServo4Angle->value() == 240,
+                 "servo sliders did not update their angle fields")) {
+        return 1;
+    }
+    standaloneServo2Angle->setValue(30);
+    standaloneServo3Angle->setValue(95);
+    standaloneServo4Angle->setValue(300);
+    if (!require(standaloneServo2Slider->value() == 30 &&
+                     standaloneServo3Slider->value() == 95 &&
+                     standaloneServo4Slider->value() == 300,
+                 "servo angle fields did not update their sliders")) {
+        return 1;
+    }
+    qint32 sentServoId = -1;
+    qint32 sentServoAngle = -1;
+    int servoSignalCalls = 0;
+    QObject::connect(&standaloneActionPage, &ActionTestPage::servoRequested,
+                     [&](qint32 servoId, qint32 angle) {
+                         ++servoSignalCalls;
+                         sentServoId = servoId;
+                         sentServoAngle = angle;
+                     });
+    standaloneServo3Angle->setValue(125);
+    acceptNextConfirmation();
+    standaloneServo3Send->click();
+    if (!require(sentServoId == 3 && sentServoAngle == 125 &&
+                     servoSignalCalls == 1 &&
+                     standaloneServoLog->count() == 1 &&
+                     standaloneServoLog->item(0)->text() ==
+                         QStringLiteral("舵机 3 -> 125°"),
+                 "confirmed servo target was not recorded")) {
+        return 1;
+    }
+    rejectNextConfirmation();
+    standaloneServo3Send->click();
+    if (!require(servoSignalCalls == 1 && standaloneServoLog->count() == 1,
+                 "cancelled servo target changed the signal or log")) {
         return 1;
     }
     acceptNextConfirmation();

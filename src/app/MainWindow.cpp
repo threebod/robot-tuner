@@ -277,6 +277,8 @@ MainWindow::MainWindow(QWidget *parent)
             &DeviceClient::setPlatformPosition);
     connect(actionPage_, &ActionTestPage::gripperRequested, &device_,
             &DeviceClient::setGripperOpen);
+    connect(actionPage_, &ActionTestPage::servoRequested, &device_,
+            &DeviceClient::testServo);
     connect(actionPage_, &ActionTestPage::stopRequested, &device_,
             &DeviceClient::stop);
 

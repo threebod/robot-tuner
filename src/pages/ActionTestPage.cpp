@@ -6,8 +6,10 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSlider>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -213,6 +215,55 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
     mechanismLayout->addLayout(namedRow);
     pageLayout->addWidget(mechanismGroup);
 
+    auto *servoGroup =
+        new QGroupBox(QStringLiteral("舵机目标角度（确认后发送）"), this);
+    auto *servoLayout = new QVBoxLayout(servoGroup);
+    const auto addServoRow = [this, servoGroup, servoLayout](
+                                 qint32 servoId, qint32 maximum,
+                                 QSlider *&slider, QSpinBox *&angleSpinBox,
+                                 QPushButton *&sendButton) {
+        auto *row = new QHBoxLayout;
+        row->addWidget(
+            new QLabel(QStringLiteral("舵机 %1").arg(servoId), servoGroup));
+        slider = new QSlider(Qt::Horizontal, servoGroup);
+        slider->setObjectName(
+            QStringLiteral("servo%1Slider").arg(servoId));
+        slider->setRange(0, maximum);
+        angleSpinBox = makeIntSpin(
+            QStringLiteral("servo%1AngleSpinBox").arg(servoId), 0, maximum, 0,
+            servoGroup);
+        angleSpinBox->setSuffix(QStringLiteral("°"));
+        sendButton = makeButton(
+            QStringLiteral("发送目标角度"),
+            QStringLiteral("servo%1SendButton").arg(servoId), servoGroup);
+        row->addWidget(slider, 1);
+        row->addWidget(angleSpinBox);
+        row->addWidget(sendButton);
+        servoLayout->addLayout(row);
+        connect(slider, &QSlider::valueChanged, angleSpinBox,
+                &QSpinBox::setValue);
+        connect(angleSpinBox, qOverload<int>(&QSpinBox::valueChanged), slider,
+                &QSlider::setValue);
+        connect(sendButton, &QPushButton::clicked, this,
+                [this, servoId, angleSpinBox] {
+                    requestServo(servoId, angleSpinBox);
+                });
+        actionWidgets_ += {slider, angleSpinBox, sendButton};
+    };
+    addServoRow(2, 270, servo2Slider_, servo2AngleSpinBox_,
+                servo2SendButton_);
+    addServoRow(3, 270, servo3Slider_, servo3AngleSpinBox_,
+                servo3SendButton_);
+    addServoRow(4, 360, servo4Slider_, servo4AngleSpinBox_,
+                servo4SendButton_);
+    servoActionLog_ = new QListWidget(servoGroup);
+    servoActionLog_->setObjectName(QStringLiteral("servoActionLog"));
+    servoActionLog_->setSelectionMode(QAbstractItemView::NoSelection);
+    servoLayout->addWidget(new QLabel(QStringLiteral("已发送目标记录"),
+                                      servoGroup));
+    servoLayout->addWidget(servoActionLog_);
+    pageLayout->addWidget(servoGroup);
+
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(QStringLiteral("actionStatusLabel"));
     statusLabel_->setWordWrap(true);
@@ -353,6 +404,19 @@ void ActionTestPage::requestGripperClose() {
     if (testActionsEnabled_ && confirmAction(QStringLiteral("夹爪关闭"))) {
         emit gripperRequested(false);
     }
+}
+
+void ActionTestPage::requestServo(qint32 servoId, QSpinBox *angleSpinBox) {
+    const qint32 angle = angleSpinBox->value();
+    if (!testActionsEnabled_ ||
+        !confirmAction(QStringLiteral("舵机 %1 移动到 %2°")
+                           .arg(servoId)
+                           .arg(angle))) {
+        return;
+    }
+    emit servoRequested(servoId, angle);
+    servoActionLog_->addItem(
+        QStringLiteral("舵机 %1 -> %2°").arg(servoId).arg(angle));
 }
 
 void ActionTestPage::setActionWidgetsEnabled(bool enabled) {

@@ -6,7 +6,9 @@
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QListWidget;
 class QPushButton;
+class QSlider;
 class QSpinBox;
 
 class ActionTestPage : public QWidget {
@@ -28,6 +30,7 @@ signals:
     void turretRequested(double angle, double interpolationSpeed);
     void platformPositionRequested(qint32 position);
     void gripperRequested(bool open);
+    void servoRequested(qint32 servoId, qint32 targetAngleDegrees);
     void stopRequested();
 
 private slots:
@@ -38,6 +41,7 @@ private slots:
     void requestPlatformPosition();
     void requestGripperOpen();
     void requestGripperClose();
+    void requestServo(qint32 servoId, QSpinBox *angleSpinBox);
     void requestUnlock();
     void requestStop();
 
@@ -69,5 +73,15 @@ private:
     QDoubleSpinBox *turretAngleSpinBox_{};
     QDoubleSpinBox *turretSpeedSpinBox_{};
     QComboBox *platformPositionCombo_{};
+    QSlider *servo2Slider_{};
+    QSpinBox *servo2AngleSpinBox_{};
+    QPushButton *servo2SendButton_{};
+    QSlider *servo3Slider_{};
+    QSpinBox *servo3AngleSpinBox_{};
+    QPushButton *servo3SendButton_{};
+    QSlider *servo4Slider_{};
+    QSpinBox *servo4AngleSpinBox_{};
+    QPushButton *servo4SendButton_{};
+    QListWidget *servoActionLog_{};
     QVector<QWidget *> actionWidgets_;
 };
