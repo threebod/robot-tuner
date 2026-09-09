@@ -426,6 +426,24 @@ bool DeviceClient::testTurret(double angle, double interpolationSpeed) {
     return sendTestAction(payload);
 }
 
+bool DeviceClient::testServo(qint32 servoId, qint32 targetAngleDegrees) {
+    if (!requireActionAccess()) {
+        return false;
+    }
+    const qint32 maximum = servoId == 4 ? 360 : 270;
+    if (servoId < 2 || servoId > 4 || targetAngleDegrees < 0 ||
+        targetAngleDegrees > maximum) {
+        return reject(QStringLiteral("舵机目标角度越界"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(4);
+    payload.append(char(0x22));
+    payload.append(static_cast<char>(servoId));
+    appendU16(&payload, static_cast<quint16>(targetAngleDegrees));
+    return sendTestAction(payload);
+}
+
 bool DeviceClient::setPlatformPosition(qint32 position) {
     if (!requireActionAccess()) {
         return false;

@@ -971,6 +971,91 @@ int main(int argc, char **argv) {
     chassisResponse.payload.clear();
     actionProtocol.ingestBytes(QByteArrayView(encodeFrame(chassisResponse)));
 
+    actionRequestBytes.clear();
+    if (!require(actionDevice.testServo(2, 270),
+                 "servo 2 maximum was rejected")) {
+        return 1;
+    }
+    const protocol::Frame servo2Request = capturedFrame(actionRequestBytes);
+    if (!require(servo2Request.payload ==
+                     QByteArray::fromHex("22 02 0e 01"),
+                 "servo 2 payload changed")) {
+        return 1;
+    }
+    protocol::Frame servo2Response = servo2Request;
+    servo2Response.flags = protocol::Response;
+    servo2Response.payload.clear();
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(servo2Response)));
+
+    ProtocolClient servoNoRetryProtocol(5);
+    DeviceClient servoNoRetryDevice(&servoNoRetryProtocol);
+    QVector<QByteArray> servoNoRetryRequests;
+    int servoNoRetryFrameCount = 0;
+    QObject::connect(&servoNoRetryProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         servoNoRetryRequests.push_back(bytes);
+                         const protocol::Frame frame = capturedFrame(bytes);
+                         if (frame.command == static_cast<quint8>(
+                                 protocol::Command::TestAction) &&
+                             !frame.payload.isEmpty() &&
+                             static_cast<quint8>(frame.payload.at(0)) == 0x22) {
+                             ++servoNoRetryFrameCount;
+                         }
+                     });
+    servoNoRetryDevice.hello();
+    const QByteArray servoNoRetryHello = servoNoRetryRequests.back();
+    feedResponse(&servoNoRetryProtocol, servoNoRetryHello,
+                 protocol::Command::Hello, helloPayload);
+    servoNoRetryRequests.clear();
+    servoNoRetryDevice.unlockTests();
+    const QByteArray servoNoRetryUnlock = servoNoRetryRequests.back();
+    feedResponse(&servoNoRetryProtocol, servoNoRetryUnlock,
+                 protocol::Command::TestUnlock, QByteArray::fromHex("30 75"));
+    servoNoRetryRequests.clear();
+    if (!require(servoNoRetryDevice.testServo(2, 270),
+                 "servo action for retry test was rejected")) {
+        return 1;
+    }
+    QElapsedTimer servoActionWait;
+    servoActionWait.start();
+    while (servoActionWait.elapsed() < 35) {
+        QCoreApplication::processEvents();
+        QThread::msleep(2);
+    }
+    if (!require(servoNoRetryFrameCount == 1,
+                 "TEST_ACTION servo request was retried after a lost ACK")) {
+        return 1;
+    }
+
+    actionRequestBytes.clear();
+    if (!require(actionDevice.testServo(4, 360),
+                 "servo 4 maximum was rejected")) {
+        return 1;
+    }
+    const protocol::Frame servo4Request = capturedFrame(actionRequestBytes);
+    if (!require(servo4Request.payload ==
+                     QByteArray::fromHex("22 04 68 01"),
+                 "servo 4 payload changed")) {
+        return 1;
+    }
+    protocol::Frame servo4Response = servo4Request;
+    servo4Response.flags = protocol::Response;
+    servo4Response.payload.clear();
+    actionProtocol.ingestBytes(QByteArrayView(encodeFrame(servo4Response)));
+    const int servoRangeErrorsBefore = actionErrors;
+    actionRequestBytes.clear();
+    if (!require(!actionDevice.testServo(1, 90),
+                 "invalid servo ID was accepted") ||
+        !require(!actionDevice.testServo(3, 271),
+                 "servo 3 overtravel was accepted") ||
+        !require(!actionDevice.testServo(4, 361),
+                 "servo 4 overtravel was accepted") ||
+        !require(actionRequestBytes.isEmpty() &&
+                     actionErrors == servoRangeErrorsBefore + 3,
+                 "invalid servo targets were sent")) {
+        return 1;
+    }
+
     const int rangeErrorsBefore = actionErrors;
     actionRequestBytes.clear();
     if (!require(!actionDevice.testChassis(81, 0, 0, 100),

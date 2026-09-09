@@ -34,6 +34,9 @@ static float fake_turret_target;
 static float fake_turret_speed;
 static uint16_t fake_chassis_duration;
 static uint16_t fake_chassis_acceleration;
+static uint8_t fake_servo_id;
+static uint16_t fake_servo_angle;
+static unsigned int fake_servo_calls;
 
 static void fake_chassis(int16_t vx, int16_t vy, int16_t w,
                          uint16_t duration_ms, uint16_t acceleration)
@@ -64,6 +67,13 @@ static void fake_turret(float target, float speed)
 {
     fake_turret_target = target;
     fake_turret_speed = speed;
+}
+
+static void fake_servo(uint8_t id, uint16_t angle)
+{
+    fake_servo_id = id;
+    fake_servo_angle = angle;
+    ++fake_servo_calls;
 }
 
 static void fake_stop(void)
@@ -452,7 +462,8 @@ int main(void)
             fake_turret,
             NULL,
             NULL,
-            NULL
+            NULL,
+            fake_servo
         };
         HostFrame hello_request = { 0 };
         HostFrame action_request = { 0 };
@@ -461,6 +472,9 @@ int main(void)
         fake_action_calls = 0u;
         fake_stop_calls = 0u;
         fake_emergency_calls = 0u;
+        fake_servo_id = 0u;
+        fake_servo_angle = 0u;
+        fake_servo_calls = 0u;
         HostSafety_Init(&safety_callbacks);
         HostCommands_Init(&command_callbacks);
 
@@ -808,10 +822,69 @@ int main(void)
                 return 1;
             }
         }
+        action_request.length = 4u;
+        memset(action_request.payload, 0, sizeof(action_request.payload));
+        action_request.payload[0] = HOST_ACTION_SERVO;
+        action_request.payload[1] = 2u;
+        write_u16(&action_request.payload[2], 270u);
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_NOT_UNLOCKED,
+                               "locked servo action was accepted") ||
+            !require_condition(fake_servo_calls == 0u,
+                               "locked servo action callback was called")) {
+            return 1;
+        }
         if (!require_condition(HostSafety_Unlock(1000u),
                                "safety unlock failed")) {
             return 1;
         }
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_NONE,
+                               "unlocked servo action was rejected") ||
+            !require_condition(fake_servo_calls == 1u &&
+                                   fake_servo_id == 2u &&
+                                   fake_servo_angle == 270u,
+                               "servo callback received the wrong target")) {
+            return 1;
+        }
+        action_request.payload[1] = 1u;
+        write_u16(&action_request.payload[2], 90u);
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_PARAM_RANGE,
+                               "invalid servo ID was accepted") ||
+            !require_condition(fake_servo_calls == 1u,
+                               "invalid servo ID reached the callback")) {
+            return 1;
+        }
+        action_request.payload[1] = 3u;
+        write_u16(&action_request.payload[2], 271u);
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_PARAM_RANGE,
+                               "servo 3 overtravel was accepted") ||
+            !require_condition(fake_servo_calls == 1u,
+                               "servo 3 overtravel reached the callback")) {
+            return 1;
+        }
+        action_request.payload[1] = 4u;
+        write_u16(&action_request.payload[2], 361u);
+        if (!require_condition(HostCommands_Handle(&action_request, &response,
+                                                    HOST_LINK_USB, 1000u) ==
+                                   HOST_ERROR_PARAM_RANGE,
+                               "servo 4 overtravel was accepted") ||
+            !require_condition(fake_servo_calls == 1u,
+                               "servo 4 overtravel reached the callback")) {
+            return 1;
+        }
+
+        action_request.length = 9u;
+        memset(action_request.payload, 0, sizeof(action_request.payload));
+        action_request.payload[0] = HOST_ACTION_CHASSIS;
+        action_request.payload[7] = 50u;
+        action_request.payload[8] = 0u;
         if (!require_condition(HostCommands_Handle(&action_request, &response,
                                                     HOST_LINK_USB, 1000u) ==
                                    HOST_ERROR_NONE,

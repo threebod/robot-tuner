@@ -33,6 +33,7 @@ public:
     bool testHorizontal(double target, qint32 speed, qint32 accel);
     bool testLift(double target, qint32 speed, qint32 accel);
     bool testTurret(double angle, double interpolationSpeed);
+    bool testServo(qint32 servoId, qint32 targetAngleDegrees);
     bool setPlatformPosition(qint32 position);
     bool setGripperOpen(bool open);
     bool stop();
