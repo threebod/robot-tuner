@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     protocol::Frame errorResponse = errorRequests.front();
-    errorResponse.flags = protocol::Error;
+    errorResponse.flags = protocol::Response | protocol::Error;
     errorResponse.payload = QByteArray("error-response");
     client.ingestBytes(QByteArrayView(encodeFrame(errorResponse)));
     if (!require(responseCount == responseCountBeforeWrongCommand + 2 &&
@@ -281,6 +281,28 @@ int main(int argc, char **argv) {
     cancelLoop.exec();
     if (!require(cancelActionFrames == 1 && cancelFailures == 0,
                  "cancelled action request was retried or timed out")) {
+        return 1;
+    }
+
+    ProtocolClient actionRetryClient(10);
+    int actionRetryFrames = 0;
+    int actionRetryFailures = 0;
+    QObject::connect(&actionRetryClient, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         if (capturedFrame(bytes).command == static_cast<quint8>(
+                                 protocol::Command::TestAction)) {
+                             ++actionRetryFrames;
+                         }
+                     });
+    QObject::connect(&actionRetryClient, &ProtocolClient::requestFailed,
+                     [&](quint8, const QString &) { ++actionRetryFailures; });
+    actionRetryClient.sendRequest(protocol::Command::TestAction,
+                                  QByteArray("move"));
+    QEventLoop actionRetryLoop;
+    QTimer::singleShot(35, &actionRetryLoop, &QEventLoop::quit);
+    actionRetryLoop.exec();
+    if (!require(actionRetryFrames == 1 && actionRetryFailures == 1,
+                 "TEST_ACTION was retried after its ACK was lost")) {
         return 1;
     }
 

@@ -171,7 +171,8 @@ ActionTestPage::ActionTestPage(QWidget *parent) : QWidget(parent) {
         mechanismGroup);
     actionWidgets_ += {turretAngleSpinBox_, turretSpeedSpinBox_};
     turretFields->addRow(QStringLiteral("云台角度"), turretAngleSpinBox_);
-    turretFields->addRow(QStringLiteral("插补速度"), turretSpeedSpinBox_);
+    turretFields->addRow(QStringLiteral("插补速度 (degree/s)"),
+                         turretSpeedSpinBox_);
     mechanismLayout->addLayout(turretFields);
     auto *turretButton = makeButton(QStringLiteral("执行云台动作"),
                                      QStringLiteral("testTurretButton"),

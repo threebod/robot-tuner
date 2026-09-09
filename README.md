@@ -10,7 +10,8 @@ C 盘：
 
 - Qt 6.11.1 MinGW 64-bit：`E:\Qt\6.11.1\mingw_64`
 - MinGW 13.1：`E:\Qt\Tools\mingw1310_64\bin`
-- CMake 3.22 或更高版本（本机为 3.30.5）：`E:\Qt\Tools\CMake_64\bin`
+- CMake 3.22 或更高版本（本机为 3.30.5）：`E:\Qt\Tools\CMake_64\bin`（CTest 的 Qt
+  `ENVIRONMENT_MODIFICATION` 需要 3.22+）
 - Ninja 1.12.1：`E:\Qt\Tools\Ninja`
 
 在 PowerShell 中配置本次会话的 PATH（路径顺序有意固定），然后从本目录执行：

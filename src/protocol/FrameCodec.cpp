@@ -2,8 +2,15 @@
 
 #include "protocol/Crc16.h"
 
+bool isValidFrameFlags(quint8 flags) {
+    return flags == protocol::Request || flags == protocol::Response ||
+           flags == (protocol::Response | protocol::Error) ||
+           flags == protocol::Event;
+}
+
 QByteArray encodeFrame(const protocol::Frame &frame) {
-    if (frame.version != 1 || frame.payload.size() > 128) {
+    if (frame.version != 1 || !isValidFrameFlags(frame.flags) ||
+        frame.payload.size() > 128) {
         return {};
     }
 

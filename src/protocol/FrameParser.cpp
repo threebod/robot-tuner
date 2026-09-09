@@ -1,6 +1,7 @@
 #include "protocol/FrameParser.h"
 
 #include "protocol/Crc16.h"
+#include "protocol/FrameCodec.h"
 
 #include <utility>
 
@@ -92,6 +93,11 @@ void FrameParser::parseAvailable(QVector<protocol::Frame> &frames) {
         }
 
         if (static_cast<quint8>(buffer_.at(2)) != 1) {
+            buffer_.remove(0, frameSize);
+            continue;
+        }
+        if (!isValidFrameFlags(static_cast<quint8>(buffer_.at(3)))) {
+            ++stats_.flagErrors;
             buffer_.remove(0, frameSize);
             continue;
         }

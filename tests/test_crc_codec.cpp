@@ -80,6 +80,18 @@ int main() {
     }
     frame.version = 1;
 
+    frame.flags = static_cast<quint8>(protocol::Request | protocol::Response);
+    if (!require(encodeFrame(frame).isEmpty(),
+                 "request/response flag combination was not rejected")) {
+        return 1;
+    }
+    frame.flags = static_cast<quint8>(protocol::Request | protocol::Error);
+    if (!require(encodeFrame(frame).isEmpty(),
+                 "request/error flag combination was not rejected")) {
+        return 1;
+    }
+    frame.flags = protocol::Request;
+
     frame.payload = QByteArray(128, '\xA5');
     const QByteArray maxEncoded = encodeFrame(frame);
     if (!require(maxEncoded.size() == 10 + 128,

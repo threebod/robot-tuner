@@ -12,6 +12,7 @@ public:
     struct Stats {
         quint64 crcErrors{0};
         quint64 lengthErrors{0};
+        quint64 flagErrors{0};
         quint64 discardedBytes{0};
     };
 

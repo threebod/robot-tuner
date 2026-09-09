@@ -1190,7 +1190,7 @@ int main(int argc, char **argv) {
     raceDevice.testChassis(0, 0, 0, 100);
     const QByteArray busyActionRequest = raceRequests.back();
     protocol::Frame busyResponse = capturedFrame(busyActionRequest);
-    busyResponse.flags = protocol::Error;
+    busyResponse.flags = protocol::Response | protocol::Error;
     busyResponse.payload = QByteArray(1, char(0x08));
     raceProtocol.ingestBytes(QByteArrayView(encodeFrame(busyResponse)));
     if (!require(!raceDevice.testsUnlocked() &&
@@ -1208,7 +1208,7 @@ int main(int argc, char **argv) {
     raceDevice.testChassis(0, 0, 0, 100);
     const QByteArray rangeActionRequest = raceRequests.back();
     protocol::Frame rangeResponse = capturedFrame(rangeActionRequest);
-    rangeResponse.flags = protocol::Error;
+    rangeResponse.flags = protocol::Response | protocol::Error;
     rangeResponse.payload = QByteArray(1, char(0x07));
     raceProtocol.ingestBytes(QByteArrayView(encodeFrame(rangeResponse)));
     if (!require(!raceDevice.testsUnlocked() &&

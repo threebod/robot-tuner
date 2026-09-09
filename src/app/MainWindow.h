@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QTimer>
 
 #include "device/DeviceClient.h"
 #include "protocol/ProtocolClient.h"
@@ -38,6 +39,7 @@ private slots:
     void handleTestUnlockStateChanged(bool unlocked, qint64 remainingMs);
     void handleEmergencyStateChanged(bool locked);
     void requestClearEmergencyStop();
+    void sendHeartbeat();
 
 private:
     void setDeviceControlsEnabled(bool enabled);
@@ -45,6 +47,7 @@ private:
     ProtocolClient protocol_;
     DeviceClient device_;
     SerialController serial_;
+    QTimer *heartbeatTimer_{};
 
     QComboBox *portCombo_{};
     QComboBox *baudCombo_{};

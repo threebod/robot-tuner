@@ -3,12 +3,15 @@
 #include <QByteArrayView>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QLabel>
 #include <QListWidget>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTimer>
 #include <QWidget>
 
 #include <iostream>
@@ -122,6 +125,7 @@ int main(int argc, char **argv) {
         window.findChild<QSpinBox *>("imuTelemetryRateSpinBox");
     auto *protocol = window.findChild<ProtocolClient *>();
     auto *device = window.findChild<DeviceClient *>();
+    auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
     if (!require(nav && nav->count() == 7, "navigation pages changed") ||
         !require(portCombo && baudCombo && refreshPortsButton && connectButton,
                  "connection controls are missing") ||
@@ -174,7 +178,9 @@ int main(int argc, char **argv) {
                      ramOnlyNotice->text().contains(QStringLiteral("RAM")) &&
                      ramOnlyNotice->text().contains(QStringLiteral("Flash")),
                  "RAM-only notice is missing") ||
-        !require(protocol && device, "window protocol service is missing")) {
+        !require(protocol && device && heartbeatTimer &&
+                     heartbeatTimer->interval() <= 500,
+                 "window protocol or heartbeat service is missing")) {
         return 1;
     }
 
@@ -221,6 +227,7 @@ int main(int argc, char **argv) {
 
     QByteArray helloRequestBytes;
     QVector<QByteArray> telemetryRequests;
+    bool heartbeatResponsesEnabled = false;
     QObject::connect(protocol, &ProtocolClient::bytesReady,
                      [&](const QByteArray &bytes) {
                          const protocol::Frame frame = capturedFrame(bytes);
@@ -230,9 +237,27 @@ int main(int argc, char **argv) {
                          } else if (frame.command == static_cast<quint8>(
                                         protocol::Command::SetTelemetry)) {
                              telemetryRequests.push_back(bytes);
+                             protocol::Frame telemetryResponse = frame;
+                             telemetryResponse.flags = protocol::Response;
+                             telemetryResponse.payload = frame.payload;
+                             protocol->ingestBytes(QByteArrayView(
+                                 encodeFrame(telemetryResponse)));
+                         } else if (!heartbeatResponsesEnabled &&
+                                    frame.command == static_cast<quint8>(
+                                        protocol::Command::GetStatus)) {
+                             protocol::Frame statusResponse = frame;
+                             statusResponse.flags = protocol::Response;
+                             statusResponse.payload =
+                                 QByteArray::fromHex("01 00 00 00 00 00");
+                             protocol->ingestBytes(QByteArrayView(
+                                 encodeFrame(statusResponse)));
                          }
                      });
-    device->hello();
+    if (!require(QMetaObject::invokeMethod(&window, "handleSerialOpened",
+                                           Qt::DirectConnection),
+                 "serial-open handler could not be invoked")) {
+        return 1;
+    }
     const protocol::Frame helloRequest = capturedFrame(helloRequestBytes);
     protocol::Frame helloResponse = helloRequest;
     helloResponse.flags = protocol::Response;
@@ -265,14 +290,54 @@ int main(int argc, char **argv) {
     unlockResponse.payload = QByteArray::fromHex("30 75");
     protocol->ingestBytes(QByteArrayView(encodeFrame(unlockResponse)));
     if (!require(actionChassis->isEnabled() && actionChassisVx->isEnabled() &&
-                     actionHorizontalTarget->isEnabled(),
+                      actionHorizontalTarget->isEnabled(),
                  "successful TEST_UNLOCK did not enable action controls")) {
+        return 1;
+    }
+
+    int heartbeatCount = 0;
+    QVector<qint64> heartbeatTimes;
+    QElapsedTimer heartbeatClock;
+    heartbeatClock.start();
+    QObject::connect(protocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) {
+                         const protocol::Frame request = capturedFrame(bytes);
+                         if (request.command != static_cast<quint8>(
+                                 protocol::Command::GetStatus)) {
+                             return;
+                         }
+                         ++heartbeatCount;
+                         heartbeatTimes.push_back(heartbeatClock.elapsed());
+                         protocol::Frame statusResponse = request;
+                         statusResponse.flags = protocol::Response;
+                          statusResponse.payload =
+                              QByteArray::fromHex("01 00 01 00 00 00");
+                          protocol->ingestBytes(QByteArrayView(
+                              encodeFrame(statusResponse)));
+                      });
+    heartbeatResponsesEnabled = true;
+    QEventLoop heartbeatLoop;
+    QTimer::singleShot(620, &heartbeatLoop, &QEventLoop::quit);
+    heartbeatLoop.exec();
+    if (!require(heartbeatCount >= 2,
+                 "unlocked handshaken UI did not send periodic GET_STATUS heartbeats")) {
+        return 1;
+    }
+    for (int index = 1; index < heartbeatTimes.size(); ++index) {
+        if (!require(heartbeatTimes[index] - heartbeatTimes[index - 1] <= 500,
+                     "heartbeat interval exceeded 500 ms")) {
+            return 1;
+        }
+    }
+    if (!require(heartbeatTimer->isActive(),
+                 "heartbeat timer was not active while device was unlocked")) {
         return 1;
     }
     device->emergencyStop();
     if (!require(!actionChassis->isEnabled() && !actionChassisVx->isEnabled() &&
-                     !actionHorizontalTarget->isEnabled(),
-                 "emergency stop did not disable action controls")) {
+                      !actionHorizontalTarget->isEnabled() &&
+                      !heartbeatTimer->isActive(),
+                  "emergency stop did not disable action controls or heartbeat")) {
         return 1;
     }
     const protocol::Frame defaultTelemetry =
@@ -297,6 +362,20 @@ int main(int argc, char **argv) {
                      connectionStatusLabel->text().contains(
                          QStringLiteral("不可用")),
                  "a post-handshake request failure did not lock controls")) {
+        return 1;
+    }
+    const int heartbeatCountBeforeClose = heartbeatCount;
+    if (!require(QMetaObject::invokeMethod(&window, "handleSerialClosed",
+                                           Qt::DirectConnection),
+                 "serial-close handler could not be invoked")) {
+        return 1;
+    }
+    QEventLoop closedHeartbeatLoop;
+    QTimer::singleShot(320, &closedHeartbeatLoop, &QEventLoop::quit);
+    closedHeartbeatLoop.exec();
+    if (!require(!heartbeatTimer->isActive() &&
+                     heartbeatCount == heartbeatCountBeforeClose,
+                 "disconnected UI continued sending heartbeats")) {
         return 1;
     }
 

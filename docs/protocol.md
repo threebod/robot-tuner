@@ -21,9 +21,11 @@ length:u16_le | payload:length | crc16:u16_le
 请求调试动作。当前 STM32 `host_protocol` 的 `capabilities` 为 `0`，能力位保留，不能
 据此假设尚未声明的硬件功能。
 
-设备以收到的第一条合法协议帧确定 `active_link`（USB 或 Bluetooth）；参数写入、遥测、
-校准、解锁、动作、停止和急停等受控命令必须来自该链路，另一链路返回 `BUSY`。设备重启
-后重新选择链路，运行中不会自动切换。`GET_STATUS` 响应中的 `active_link` 为当前链路枚举值。
+设备以收到的第一条合法 `HELLO` 确定 `active_link`（USB 或 Bluetooth），并只为该链路
+记录握手完成状态；另一链路的 `HELLO` 返回 `BUSY`，不会改变活动链路或把另一链路标记
+为可用。参数读写、遥测、校准、解锁、动作、停止和急停等受控命令必须来自活动且已
+`HELLO` 的同一链路，否则返回 `BUSY` 或 `NOT_UNLOCKED`。设备重启后重新选择链路，运行中
+不会自动切换。`GET_STATUS` 响应中的 `active_link` 为当前链路枚举值。
 
 固件 `HOST_DEBUG_MODE=1` 时运行本协议调试入口；设为 `0` 时不启动该入口并回到原有主
 循环。该宏由固件构建配置决定，不是帧字段或上位机运行时选项。
@@ -37,7 +39,8 @@ length:u16_le | payload:length | crc16:u16_le
 | `Event` | `0x04` | 主动事件/遥测帧 |
 | `Error` | `0x08` | 错误标志，可与 `Response` 合用 |
 
-错误响应使用 `Response | Error`（值 `0x0A`），保留请求的 sequence 和 command，
+仅允许四种 flags 组合：`Request`、`Response`、`Response | Error` 和 `Event`；其他组合
+在 Qt 编解码器和固件命令入口均拒绝。错误响应使用 `Response | Error`（值 `0x0A`），保留请求的 sequence 和 command，
 payload 的第一个字节是 `error:u8`。
 
 ## 命令
@@ -61,7 +64,9 @@ payload 的第一个字节是 `error:u8`。
 
 `IMU_CALIBRATE` 的 `state` 为 `0=started`、`1=completed`、`2=failed`。设备支持
 的遥测 mask 由固件定义；9600 baud 链路的 IMU 频率范围为 1–20 Hz，115200 baud
-链路为 1–50 Hz，设备在响应中返回实际采用周期。
+链路为 1–50 Hz，设备在响应中返回实际采用周期。RAM 参数 `0x4000` 是实际 IMU/遥测
+频率的上限配置，`SET_TELEMETRY` 响应中的 `actual_period_ms` 由该配置（再按链路能力
+限幅）计算，不能仅把请求 period 当作固件实际频率。
 
 `GET_PARAM_GROUP` 的 `page` 为可选的从 0 开始的分页号；省略时等同于 `page=0`。
 单帧最多承载 18 条参数记录（响应仍使用原有的 `group:u8 count:u8` 记录布局）。
@@ -157,8 +162,15 @@ PID 组 `0x10` 共 25 条记录，因此 `page=0` 返回目录中的前 18 条�
 | `0x20` platform named position | `action:u8 position:u8`，position 为 1..3 |
 | `0x21` gripper named state | `action:u8 state:u8`，0=close、1=open |
 
-动作测试必须先 `TEST_UNLOCK`；设备端解锁时长固定为 30000 ms。断开、通信看门狗
-超时或进入急停都会使动作权限失效。
+动作测试必须先 `TEST_UNLOCK`；设备端解锁时长固定为 30000 ms。底盘参数组 `0x20` 的
+速度限值按绝对值解释（写入 0 即禁止该轴动作），点动时长是动作安全上限，`0x2004`
+加速度会在底盘动作路径应用；机构组
+`0x30` 的位置、速度和加速度是机构动作实际采用的 RAM 配置。动作 payload 仍须通过
+物理范围校验，但执行值取上述已写入的配置。云台 `interpolation_speed` 单位为 degree/s，
+固件依据当前角度与目标角度计算毫秒时长后调用舵机插补接口。Qt 上位机在握手且解锁期间
+每 250 ms 发送一次轻量 `GET_STATUS` 心跳；断连、握手失效、急停或解锁失效时停止发送。
+底盘点动时长到期只停止当前运动并保留 30 秒解锁；30 秒到期或通信看门狗超时才关闭解锁
+并 fail-closed 停止执行器。断开或进入急停也会使动作权限失效。
 
 ## 遥测换算
 

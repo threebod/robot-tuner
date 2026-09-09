@@ -23,7 +23,8 @@ set(pwm_h "${firmware_dir}/Hardware/PWM.h")
 set(uart5 "${firmware_dir}/lanya/usart5.c")
 set(project "${firmware_dir}/USER/Template.uvprojx")
 
-foreach(name host_uart3.h host_uart3.c host_time.h host_time.c host_debug.h host_debug.c)
+foreach(name host_uart3.h host_uart3.c host_time.h host_time.c host_debug.h host_debug.c
+             host_runtime.h host_runtime.c)
     require_file("${firmware_dir}/host_protocol/${name}")
 endforeach()
 require_text("${safety}" "PWM_StopAll();")

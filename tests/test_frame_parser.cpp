@@ -73,6 +73,23 @@ int main() {
         regressionFailed = true;
     }
 
+    FrameParser flagsParser;
+    QByteArray invalidFlags = firstBytes;
+    invalidFlags[3] = static_cast<char>(protocol::Request | protocol::Response);
+    const quint16 invalidFlagsCrc = crc16CcittFalse(
+        QByteArrayView(invalidFlags.constData() + 2, invalidFlags.size() - 4));
+    invalidFlags[invalidFlags.size() - 2] =
+        static_cast<char>(invalidFlagsCrc & 0xFF);
+    invalidFlags[invalidFlags.size() - 1] =
+        static_cast<char>((invalidFlagsCrc >> 8) & 0xFF);
+    const QVector<protocol::Frame> flagsResult = flagsParser.push(
+        QByteArrayView(invalidFlags + secondBytes));
+    if (!require(flagsResult.size() == 1 && sameFrame(flagsResult.front(), second) &&
+                     flagsParser.stats().flagErrors == 1,
+                 "a CRC-valid invalid flags frame was accepted")) {
+        regressionFailed = true;
+    }
+
     FrameParser noiseParser;
     const QByteArray noise = QByteArray::fromHex("00 04 05 06");
     const QVector<protocol::Frame> noiseResult = noiseParser.push(

@@ -40,7 +40,9 @@ quint8 ProtocolClient::sendRequest(protocol::Command command,
 
     PendingRequest pending;
     pending.frame = frame;
-    pending.retriesRemaining = 1;
+    // Action requests are not idempotent: a lost ACK must not execute the
+    // physical action a second time.  Read/status requests retain one retry.
+    pending.retriesRemaining = command == protocol::Command::TestAction ? 0 : 1;
     pending.deadline = QDeadlineTimer(timeoutMs_);
     pending.elapsed.start();
     pending_.insert(sequence, std::move(pending));

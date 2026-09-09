@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.22)
 
 project(robot_tuner LANGUAGES C CXX)
 
@@ -212,6 +212,7 @@ add_executable(test_stm32_protocol
     ${STM32_HOST_PROTOCOL_DIR}/host_frame.c
     ${STM32_HOST_PROTOCOL_DIR}/host_link.c
     ${STM32_HOST_PROTOCOL_DIR}/host_params.c
+    ${STM32_HOST_PROTOCOL_DIR}/host_runtime.c
     ${STM32_HOST_PROTOCOL_DIR}/host_safety.c
     ${STM32_HOST_PROTOCOL_DIR}/host_commands.c
 )
@@ -248,6 +249,7 @@ if(TASK12_ENABLE_HOST_STUB_COMPILE)
         ${STM32_HOST_PROTOCOL_DIR}/host_frame.c
         ${STM32_HOST_PROTOCOL_DIR}/host_link.c
         ${STM32_HOST_PROTOCOL_DIR}/host_params.c
+        ${STM32_HOST_PROTOCOL_DIR}/host_runtime.c
         ${STM32_HOST_PROTOCOL_DIR}/host_safety.c
         ${STM32_HOST_PROTOCOL_DIR}/host_commands.c
         ${STM32_HOST_PROTOCOL_DIR}/host_uart3.c

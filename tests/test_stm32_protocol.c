@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "host_config.h"
 #include "host_crc16.h"
@@ -9,6 +10,7 @@
 #include "host_link.h"
 #include "host_commands.h"
 #include "host_params.h"
+#include "host_runtime.h"
 #include "host_safety.h"
 
 PID_Profile_t PID_Profiles[5] = {
@@ -22,15 +24,46 @@ PID_Profile_t PID_Profiles[5] = {
 static unsigned int fake_action_calls;
 static unsigned int fake_stop_calls;
 static unsigned int fake_emergency_calls;
+static float fake_horizontal_target;
+static uint16_t fake_horizontal_speed;
+static uint8_t fake_horizontal_accel;
+static float fake_lift_target;
+static uint16_t fake_lift_speed;
+static uint8_t fake_lift_accel;
+static float fake_turret_target;
+static float fake_turret_speed;
+static uint16_t fake_chassis_duration;
+static uint16_t fake_chassis_acceleration;
 
 static void fake_chassis(int16_t vx, int16_t vy, int16_t w,
-                         uint16_t duration_ms)
+                         uint16_t duration_ms, uint16_t acceleration)
 {
     (void)vx;
     (void)vy;
     (void)w;
-    (void)duration_ms;
+    fake_chassis_duration = duration_ms;
+    fake_chassis_acceleration = acceleration;
     ++fake_action_calls;
+}
+
+static void fake_horizontal(float target, uint16_t speed, uint8_t accel)
+{
+    fake_horizontal_target = target;
+    fake_horizontal_speed = speed;
+    fake_horizontal_accel = accel;
+}
+
+static void fake_lift(float target, uint16_t speed, uint8_t accel)
+{
+    fake_lift_target = target;
+    fake_lift_speed = speed;
+    fake_lift_accel = accel;
+}
+
+static void fake_turret(float target, float speed)
+{
+    fake_turret_target = target;
+    fake_turret_speed = speed;
 }
 
 static void fake_stop(void)
@@ -87,6 +120,17 @@ static bool parse_bytes(HostFrameParser *parser,
         result = HostFrameParser_Push(parser, bytes[index], out);
     }
     return result == expected;
+}
+
+static void write_u16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)(value & 0xFFu);
+    bytes[1] = (uint8_t)(value >> 8);
+}
+
+static void write_f32(uint8_t *bytes, float value)
+{
+    memcpy(bytes, &value, sizeof(value));
 }
 
 int main(void)
@@ -338,6 +382,64 @@ int main(void)
         }
     }
 
+    if (!require_condition(HostRuntime_TurretDurationMs(100.0f, 110.0f,
+                                                        10.0f) == 1000u,
+                           "turret degree/s interpolation duration is wrong") ||
+        !require_condition(HostRuntime_TurretDurationMs(180.0f, 180.0f,
+                                                        10.0f) == 1u,
+                           "zero-angle turret move did not get a safe duration") ||
+        !require_condition(HostRuntime_TurretDurationMs(180.0f, 200.0f,
+                                                        0.0f) == 0u,
+                           "zero turret speed was not rejected")) {
+        return 1;
+    }
+
+    {
+        const HostSafetyCallbacks safety_callbacks = {
+            fake_stop,
+            fake_emergency_stop
+        };
+        const HostCommandCallbacks command_callbacks = { 0 };
+        HostFrame hello_request = { 0 };
+        HostFrame controlled_request = { 0 };
+        HostFrame response = { 0 };
+
+        HostSafety_Init(&safety_callbacks);
+        HostCommands_Init(&command_callbacks);
+        hello_request.version = HOST_PROTOCOL_VERSION;
+        hello_request.flags = HOST_FLAG_REQUEST;
+        hello_request.command = HOST_COMMAND_HELLO;
+        if (!require_condition(HostCommands_Handle(&hello_request, &response,
+                                                    HOST_LINK_USB, 5000u) ==
+                                   HOST_ERROR_NONE,
+                               "active-link HELLO was rejected") ||
+            !require_condition(HostCommands_HandshakeCompleteForLink(
+                                   HOST_LINK_USB),
+                               "active-link HELLO did not bind USB") ||
+            !require_condition(HostCommands_Handle(&hello_request, &response,
+                                                    HOST_LINK_BLUETOOTH,
+                                                    5001u) ==
+                                   HOST_ERROR_BUSY,
+                               "non-active HELLO changed link ownership") ||
+            !require_condition(!HostCommands_HandshakeCompleteForLink(
+                                   HOST_LINK_BLUETOOTH),
+                               "non-active HELLO marked Bluetooth ready") ||
+            !require_condition(HostSafety_GetActiveLink() == HOST_LINK_USB,
+                               "non-active HELLO replaced active link")) {
+            return 1;
+        }
+        controlled_request.version = HOST_PROTOCOL_VERSION;
+        controlled_request.flags = HOST_FLAG_REQUEST;
+        controlled_request.command = HOST_COMMAND_TEST_UNLOCK;
+        if (!require_condition(HostCommands_Handle(&controlled_request,
+                                                    &response,
+                                                    HOST_LINK_BLUETOOTH,
+                                                    5001u) == HOST_ERROR_BUSY,
+                               "controlled command from non-active link was accepted")) {
+            return 1;
+        }
+    }
+
     {
         const HostSafetyCallbacks safety_callbacks = {
             fake_stop,
@@ -345,9 +447,9 @@ int main(void)
         };
         const HostCommandCallbacks command_callbacks = {
             fake_chassis,
-            NULL,
-            NULL,
-            NULL,
+            fake_horizontal,
+            fake_lift,
+            fake_turret,
             NULL,
             NULL,
             NULL
@@ -370,6 +472,169 @@ int main(void)
                                    HOST_ERROR_NONE,
                                "HELLO command was rejected")) {
             return 1;
+        }
+
+        {
+            HostParamGroup runtime_update = { 0 };
+            HostFrame telemetry_request = { 0 };
+
+            runtime_update.group = 0x20u;
+            runtime_update.count = 5u;
+            runtime_update.items[0].id = 0x2000u;
+            runtime_update.items[0].type = HOST_PARAM_INT32;
+            runtime_update.items[0].value.i32 = 10;
+            runtime_update.items[1].id = 0x2001u;
+            runtime_update.items[1].type = HOST_PARAM_INT32;
+            runtime_update.items[1].value.i32 = 20;
+            runtime_update.items[2].id = 0x2002u;
+            runtime_update.items[2].type = HOST_PARAM_INT32;
+            runtime_update.items[2].value.i32 = 5;
+            runtime_update.items[3].id = 0x2003u;
+            runtime_update.items[3].type = HOST_PARAM_UINT16;
+            runtime_update.items[3].value.u16 = 120u;
+            runtime_update.items[4].id = 0x2004u;
+            runtime_update.items[4].type = HOST_PARAM_UINT16;
+            runtime_update.items[4].value.u16 = 42u;
+            if (!require_condition(HostParam_SetGroupAtomic(&runtime_update) ==
+                                       HOST_ERROR_NONE,
+                                   "valid chassis runtime group was rejected")) {
+                return 1;
+            }
+
+            action_request.version = HOST_PROTOCOL_VERSION;
+            action_request.flags = HOST_FLAG_REQUEST;
+            action_request.command = HOST_COMMAND_TEST_ACTION;
+            action_request.length = 9u;
+            action_request.payload[0] = HOST_ACTION_CHASSIS;
+            write_u16(&action_request.payload[1], 11u);
+            write_u16(&action_request.payload[3], 0u);
+            write_u16(&action_request.payload[5], 0u);
+            write_u16(&action_request.payload[7], 100u);
+            if (!require_condition(HostSafety_Unlock(1000u),
+                                   "runtime chassis unlock failed") ||
+                !require_condition(HostCommands_Handle(&action_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_PARAM_RANGE,
+                                   "chassis action exceeded RAM limit but was accepted") ||
+                !require_condition(fake_action_calls == 0u,
+                                   "out-of-limit chassis action reached callback")) {
+                return 1;
+            }
+            write_u16(&action_request.payload[1], 10u);
+            if (!require_condition(HostCommands_Handle(&action_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "chassis action inside RAM limits was rejected") ||
+                !require_condition(fake_action_calls == 1u &&
+                                       fake_chassis_duration == 100u &&
+                                       fake_chassis_acceleration == 42u,
+                                   "chassis action did not consume RAM duration/acceleration")) {
+                return 1;
+            }
+
+            runtime_update.group = 0x30u;
+            runtime_update.count = 6u;
+            runtime_update.items[0].id = 0x3000u;
+            runtime_update.items[0].type = HOST_PARAM_FLOAT32;
+            runtime_update.items[0].value.f32 = 12.5f;
+            runtime_update.items[1].id = 0x3001u;
+            runtime_update.items[1].type = HOST_PARAM_FLOAT32;
+            runtime_update.items[1].value.f32 = 22.0f;
+            runtime_update.items[2].id = 0x3002u;
+            runtime_update.items[2].type = HOST_PARAM_FLOAT32;
+            runtime_update.items[2].value.f32 = 210.0f;
+            runtime_update.items[3].id = 0x3003u;
+            runtime_update.items[3].type = HOST_PARAM_UINT16;
+            runtime_update.items[3].value.u16 = 700u;
+            runtime_update.items[4].id = 0x3004u;
+            runtime_update.items[4].type = HOST_PARAM_UINT8;
+            runtime_update.items[4].value.u8 = 33u;
+            runtime_update.items[5].id = 0x3005u;
+            runtime_update.items[5].type = HOST_PARAM_FLOAT32;
+            runtime_update.items[5].value.f32 = 5.5f;
+            if (!require_condition(HostParam_SetGroupAtomic(&runtime_update) ==
+                                       HOST_ERROR_NONE,
+                                   "valid mechanism runtime group was rejected")) {
+                return 1;
+            }
+
+            action_request.length = 8u;
+            action_request.payload[0] = HOST_ACTION_HORIZONTAL;
+            write_f32(&action_request.payload[1], 1.0f);
+            write_u16(&action_request.payload[5], 100u);
+            action_request.payload[7] = 1u;
+            if (!require_condition(HostCommands_Handle(&action_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "horizontal action using RAM settings was rejected") ||
+                !require_condition(fake_horizontal_target == 12.5f &&
+                                       fake_horizontal_speed == 700u &&
+                                       fake_horizontal_accel == 33u,
+                                   "horizontal action ignored RAM position/speed/acceleration")) {
+                return 1;
+            }
+            action_request.payload[0] = HOST_ACTION_LIFT;
+            if (!require_condition(HostCommands_Handle(&action_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "lift action using RAM settings was rejected") ||
+                !require_condition(fake_lift_target == 22.0f &&
+                                       fake_lift_speed == 700u &&
+                                       fake_lift_accel == 33u,
+                                   "lift action ignored RAM position/speed/acceleration")) {
+                return 1;
+            }
+            action_request.length = 9u;
+            action_request.payload[0] = HOST_ACTION_TURRET;
+            write_f32(&action_request.payload[1], 180.0f);
+            write_f32(&action_request.payload[5], 1.0f);
+            if (!require_condition(HostCommands_Handle(&action_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "turret action using RAM settings was rejected") ||
+                !require_condition(fake_turret_target == 210.0f &&
+                                       fake_turret_speed == 5.5f,
+                                   "turret action ignored RAM target/speed")) {
+                return 1;
+            }
+
+            runtime_update.group = 0x40u;
+            runtime_update.count = 1u;
+            runtime_update.items[0].id = 0x4000u;
+            runtime_update.items[0].type = HOST_PARAM_UINT16;
+            runtime_update.items[0].value.u16 = 5u;
+            if (!require_condition(HostParam_SetGroupAtomic(&runtime_update) ==
+                                       HOST_ERROR_NONE,
+                                   "valid IMU runtime group was rejected")) {
+                return 1;
+            }
+            telemetry_request.version = HOST_PROTOCOL_VERSION;
+            telemetry_request.flags = HOST_FLAG_REQUEST;
+            telemetry_request.command = HOST_COMMAND_SET_TELEMETRY;
+            telemetry_request.length = 3u;
+            telemetry_request.payload[0] = 0x07u;
+            write_u16(&telemetry_request.payload[1], 100u);
+            if (!require_condition(HostCommands_Handle(&telemetry_request,
+                                                        &response,
+                                                        HOST_LINK_USB,
+                                                        1000u) ==
+                                       HOST_ERROR_NONE,
+                                   "IMU telemetry request was rejected") ||
+                !require_condition(response.payload[1] == 200u &&
+                                       response.payload[2] == 0u,
+                                   "IMU telemetry frequency did not consume RAM setting")) {
+                return 1;
+            }
         }
 
         {
@@ -461,20 +726,26 @@ int main(void)
             }
         }
 
+        fake_action_calls = 0u;
         action_request.version = HOST_PROTOCOL_VERSION;
         action_request.flags = 0x01u;
         action_request.command = HOST_COMMAND_TEST_ACTION;
         action_request.length = 9u;
+        memset(action_request.payload, 0, sizeof(action_request.payload));
         action_request.payload[0] = HOST_ACTION_CHASSIS;
         action_request.payload[7] = 50u;
         action_request.payload[8] = 0u;
-        if (!require_condition(HostCommands_Handle(&action_request, &response,
-                                                    HOST_LINK_USB, 1000u) ==
-                                   HOST_ERROR_NOT_UNLOCKED,
-                               "locked chassis action was accepted") ||
-            !require_condition(fake_action_calls == 0u,
-                               "locked chassis action callback was called") ||
-            !require_condition(HostSafety_Unlock(1000u),
+        {
+            const HostError locked_action_error = HostCommands_Handle(
+                &action_request, &response, HOST_LINK_USB, 1000u);
+            if (!require_condition(locked_action_error == HOST_ERROR_NOT_UNLOCKED,
+                                   "locked chassis action was accepted") ||
+                !require_condition(fake_action_calls == 0u,
+                                   "locked chassis action callback was called")) {
+                return 1;
+            }
+        }
+        if (!require_condition(HostSafety_Unlock(1000u),
                                "safety unlock failed")) {
             return 1;
         }
@@ -514,18 +785,23 @@ int main(void)
         HostSafety_SetActiveLink(HOST_LINK_USB);
         HostSafety_NotifyValidFrame(HOST_LINK_USB, 2000u);
         if (!require_condition(HostSafety_Unlock(2000u),
-                               "watchdog test unlock failed")) {
+                                "watchdog test unlock failed")) {
+            return 1;
+        }
+        HostSafety_StopMotion();
+        if (!require_condition(HostSafety_IsUnlocked(),
+                               "jog expiry stop revoked the 30-second unlock")) {
             return 1;
         }
         HostSafety_Tick(2999u);
-        if (!require_condition(fake_stop_calls == 0u,
+        if (!require_condition(fake_stop_calls == 1u,
                                "watchdog stopped motion too early")) {
             return 1;
         }
         HostSafety_Tick(3000u);
         HostSafety_Tick(4000u);
-        if (!require_condition(fake_stop_calls == 1u,
-                               "watchdog stop callback was not exactly once") ||
+        if (!require_condition(fake_stop_calls == 2u,
+                               "watchdog fail-closed stop callback was not exactly once") ||
             !require_condition(!HostSafety_IsUnlocked(),
                                "watchdog did not revoke action unlock")) {
             return 1;

@@ -37,6 +37,13 @@ MainWindow::MainWindow(QWidget *parent)
       protocol_(this),
       device_(&protocol_, this),
       serial_(&protocol_, this) {
+    heartbeatTimer_ = new QTimer(this);
+    heartbeatTimer_->setObjectName(QStringLiteral("heartbeatTimer"));
+    heartbeatTimer_->setInterval(250);
+    heartbeatTimer_->setTimerType(Qt::CoarseTimer);
+    connect(heartbeatTimer_, &QTimer::timeout, this,
+            &MainWindow::sendHeartbeat);
+
     auto *centralWidget = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(centralWidget);
 
@@ -300,6 +307,7 @@ void MainWindow::toggleConnection() {
 
 void MainWindow::handleSerialOpened() {
     serialConnected_ = true;
+    heartbeatTimer_->stop();
     portCombo_->setEnabled(false);
     baudCombo_->setEnabled(false);
     refreshPortsButton_->setEnabled(false);
@@ -317,6 +325,7 @@ void MainWindow::handleSerialOpened() {
 
 void MainWindow::handleSerialClosed() {
     serialConnected_ = false;
+    heartbeatTimer_->stop();
     portCombo_->setEnabled(true);
     baudCombo_->setEnabled(true);
     refreshPortsButton_->setEnabled(true);
@@ -349,6 +358,7 @@ void MainWindow::handleDeviceError(QString message) {
         actionPage_->setDeviceError(message);
     }
     if (!device_.handshakeComplete()) {
+        heartbeatTimer_->stop();
         setDeviceControlsEnabled(false);
         const QString unavailable =
             QStringLiteral("未连接/不可用：%1").arg(message);
@@ -422,9 +432,25 @@ void MainWindow::handleCalibrationRequested() {
 
 void MainWindow::handleTestUnlockStateChanged(bool unlocked,
                                               qint64 remainingMs) {
+    if (unlocked && serialConnected_ && device_.handshakeComplete()) {
+        if (!heartbeatTimer_->isActive()) {
+            heartbeatTimer_->start();
+        }
+    } else {
+        heartbeatTimer_->stop();
+    }
     if (actionPage_ != nullptr) {
         actionPage_->setTestActionsEnabled(unlocked, remainingMs);
     }
+}
+
+void MainWindow::sendHeartbeat() {
+    if (!serialConnected_ || !device_.handshakeComplete() ||
+        !device_.testsUnlocked()) {
+        heartbeatTimer_->stop();
+        return;
+    }
+    device_.getStatus();
 }
 
 void MainWindow::handleEmergencyStateChanged(bool locked) {
