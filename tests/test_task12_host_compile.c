@@ -11,6 +11,19 @@ PID_Profile_t PID_Profiles[5];
 
 void PWM_StopAll(void) {}
 float PWM_GetWukuaipingtaiCurrentAngle(void) { return 20.0f; }
+float PWM_GetDebugServoCurrentAngle(uint8_t channel)
+{
+    (void)channel;
+    return 0.0f;
+}
+uint8_t PWM_SetDebugServoAngle(uint8_t channel, float target,
+                               float duration_ms)
+{
+    (void)channel;
+    (void)target;
+    (void)duration_ms;
+    return 1u;
+}
 void set_zhuashou_Angle_NonBlocking(float target, float time) {(void)target;(void)time;}
 void set_wukuaipingtai_Angle(float target, float time) {(void)target;(void)time;}
 void set_wukuaipingtai_weizhi(int pos) {(void)pos;}
