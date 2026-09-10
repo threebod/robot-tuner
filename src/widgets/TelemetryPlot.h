@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -16,6 +17,7 @@ public:
 
     void append(qint64 timestampMs, QVector<double> values);
     void clear();
+    void setChannelNames(QStringList names);
 
     int sampleCount() const;
     qint64 oldestTimestamp() const;
@@ -38,6 +40,7 @@ private:
     const int channelCount_;
     const int capacity_;
     QVector<Sample> samples_;
+    QStringList channelNames_;
     int oldestIndex_{};
     int sampleCount_{};
     QElapsedTimer repaintClock_;

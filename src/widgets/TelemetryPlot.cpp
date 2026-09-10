@@ -66,6 +66,11 @@ void TelemetryPlot::clear() {
     update();
 }
 
+void TelemetryPlot::setChannelNames(QStringList names) {
+    channelNames_ = std::move(names);
+    update();
+}
+
 int TelemetryPlot::sampleCount() const {
     return sampleCount_;
 }
@@ -176,9 +181,11 @@ void TelemetryPlot::paintEvent(QPaintEvent *event) {
     int legendX = static_cast<int>(plotRect.left());
     for (int channel = 0; channel < channelCount_; ++channel) {
         painter.setPen(channelColor(channel));
-        painter.drawText(QRectF(legendX, 2, 64, 20), Qt::AlignLeft,
-                         QStringLiteral("CH%1").arg(channel + 1));
-        legendX += 54;
+        const QString name = channel < channelNames_.size()
+                                 ? channelNames_.at(channel)
+                                 : QStringLiteral("CH%1").arg(channel + 1);
+        painter.drawText(QRectF(legendX, 2, 80, 20), Qt::AlignLeft, name);
+        legendX += 70;
     }
 }
 

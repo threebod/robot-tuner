@@ -159,6 +159,10 @@ int main(int argc, char **argv) {
     auto *pidProfile = window.findChild<QComboBox *>("pidProfileCombo");
     auto *pidKp = window.findChild<QDoubleSpinBox *>("pidKpSpinBox");
     auto *pidWrite = window.findChild<QPushButton *>("pidWriteButton");
+    auto *pidAnglePlot =
+        window.findChild<TelemetryPlot *>("pidAnglePlot");
+    auto *pidOutputPlot =
+        window.findChild<TelemetryPlot *>("pidOutputPlot");
     auto *chassisRead = window.findChild<QPushButton *>("chassisReadButton");
     auto *mechanismWrite =
         window.findChild<QPushButton *>("mechanismWriteButton");
@@ -244,6 +248,8 @@ int main(int argc, char **argv) {
                  "PID profile selector must expose five profiles") ||
         !require(pidKp && pidKp->minimum() == 0.0 && pidKp->maximum() == 20.0,
                  "PID Kp bounds must come from the catalog") ||
+        !require(pidAnglePlot && pidOutputPlot,
+                 "PID tuning plots are missing") ||
         !require(pidWrite && !pidWrite->isEnabled() && chassisRead &&
                      !chassisRead->isEnabled() && mechanismWrite &&
                      !mechanismWrite->isEnabled() && imuRate &&
@@ -467,6 +473,10 @@ int main(int argc, char **argv) {
     auto *pidPageWrite = chassis.findChild<QPushButton *>("pidWriteButton");
     auto *vx = chassis.findChild<QSpinBox *>("chassisVxSpinBox");
     auto *restore = chassis.findChild<QPushButton *>("restoreInitialButton");
+    auto *standalonePidAnglePlot =
+        chassis.findChild<TelemetryPlot *>("pidAnglePlot");
+    auto *standalonePidOutputPlot =
+        chassis.findChild<TelemetryPlot *>("pidOutputPlot");
     int readGroup = 0;
     int writeGroup = 0;
     QVector<ParameterValue> writtenValues;
@@ -479,8 +489,26 @@ int main(int argc, char **argv) {
                      });
     if (!require(pageRead && pageWrite && pidSelector && pidControl &&
                      pidPageWrite && vx && restore && !pageRead->isEnabled() &&
-                     !pageWrite->isEnabled(),
+                     !pageWrite->isEnabled() && standalonePidAnglePlot &&
+                     standalonePidOutputPlot,
                  "standalone parameter page is not locked before handshake")) {
+        return 1;
+    }
+    PidSample tuningSample;
+    tuningSample.timestampMs = 100;
+    tuningSample.targetDegrees = 30.0;
+    tuningSample.actualDegrees = 27.5;
+    tuningSample.output = 12.0;
+    chassis.setPidSample(tuningSample);
+    if (!require(standalonePidAnglePlot->sampleCount() == 1 &&
+                     standalonePidOutputPlot->sampleCount() == 1,
+                 "PID sample was not appended to both tuning plots")) {
+        return 1;
+    }
+    chassis.setConnected(false);
+    if (!require(standalonePidAnglePlot->sampleCount() == 0 &&
+                     standalonePidOutputPlot->sampleCount() == 0,
+                 "disconnect did not clear PID tuning plots")) {
         return 1;
     }
     chassis.setConnected(true);

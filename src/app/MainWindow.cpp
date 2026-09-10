@@ -227,6 +227,9 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(&device_, &DeviceClient::pidSampleReceived, this,
             [this](PidSample sample) {
+                if (chassisPage_ != nullptr) {
+                    chassisPage_->setPidSample(sample);
+                }
                 if (imuPage_ != nullptr) {
                     imuPage_->setPidSample(sample);
                 }

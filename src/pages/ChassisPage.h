@@ -13,6 +13,7 @@ class QComboBox;
 class QFormLayout;
 class QLabel;
 class QPushButton;
+class TelemetryPlot;
 
 class ChassisPage : public QWidget {
     Q_OBJECT
@@ -22,6 +23,7 @@ public:
 
     void setConnected(bool connected);
     void setValues(const QVector<ParameterValue> &values);
+    void setPidSample(const PidSample &sample);
     void clearPendingRead(quint8 group, QString reason);
 
 signals:
@@ -80,4 +82,6 @@ private:
     QPushButton *imuWriteButton_{};
     QPushButton *restoreInitialButton_{};
     QLabel *statusLabel_{};
+    TelemetryPlot *pidAnglePlot_{};
+    TelemetryPlot *pidOutputPlot_{};
 };

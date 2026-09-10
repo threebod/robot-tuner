@@ -1,5 +1,7 @@
 #include "pages/ChassisPage.h"
 
+#include "widgets/TelemetryPlot.h"
+
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -51,6 +53,8 @@ ChassisPage::ChassisPage(QWidget *parent)
 
     auto *pidGroup = new QGroupBox(QStringLiteral("PID（组 0x10）"), this);
     auto *pidLayout = new QVBoxLayout(pidGroup);
+    auto *pidContentLayout = new QHBoxLayout;
+    auto *pidSettingsLayout = new QVBoxLayout;
     auto *pidProfileRow = new QHBoxLayout;
     pidProfileRow->addWidget(new QLabel(QStringLiteral("PID 配置"), pidGroup));
     pidProfileCombo_ = new QComboBox(pidGroup);
@@ -61,7 +65,7 @@ ChassisPage::ChassisPage(QWidget *parent)
     }
     pidProfileRow->addWidget(pidProfileCombo_);
     pidProfileRow->addStretch();
-    pidLayout->addLayout(pidProfileRow);
+    pidSettingsLayout->addLayout(pidProfileRow);
 
     auto *pidFields = new QFormLayout;
     const QStringList pidObjectNames = {
@@ -83,7 +87,7 @@ ChassisPage::ChassisPage(QWidget *parent)
         interactiveWidgets_.push_back(control);
         addFieldRow(pidFields, *spec, control);
     }
-    pidLayout->addLayout(pidFields);
+    pidSettingsLayout->addLayout(pidFields);
 
     auto *pidButtons = new QHBoxLayout;
     pidReadButton_ = makeButton(QStringLiteral("读取 PID"),
@@ -93,10 +97,32 @@ ChassisPage::ChassisPage(QWidget *parent)
     pidButtons->addWidget(pidReadButton_);
     pidButtons->addWidget(pidWriteButton_);
     pidButtons->addStretch();
-    pidLayout->addLayout(pidButtons);
+    pidSettingsLayout->addLayout(pidButtons);
     interactiveWidgets_.push_back(pidProfileCombo_);
     interactiveWidgets_.push_back(pidReadButton_);
     interactiveWidgets_.push_back(pidWriteButton_);
+    pidContentLayout->addLayout(pidSettingsLayout);
+
+    auto *pidPlotsLayout = new QHBoxLayout;
+    pidAnglePlot_ = new TelemetryPlot(2, 1000, pidGroup);
+    pidAnglePlot_->setObjectName(QStringLiteral("pidAnglePlot"));
+    pidAnglePlot_->setChannelNames(
+        {QStringLiteral("目标角度"), QStringLiteral("实际角度")});
+    pidOutputPlot_ = new TelemetryPlot(1, 1000, pidGroup);
+    pidOutputPlot_->setObjectName(QStringLiteral("pidOutputPlot"));
+    pidOutputPlot_->setChannelNames({QStringLiteral("控制输出")});
+    auto *anglePlotGroup =
+        new QGroupBox(QStringLiteral("目标 / 实际角度（°）"), pidGroup);
+    auto *anglePlotLayout = new QVBoxLayout(anglePlotGroup);
+    anglePlotLayout->addWidget(pidAnglePlot_);
+    auto *outputPlotGroup =
+        new QGroupBox(QStringLiteral("控制输出"), pidGroup);
+    auto *outputPlotLayout = new QVBoxLayout(outputPlotGroup);
+    outputPlotLayout->addWidget(pidOutputPlot_);
+    pidPlotsLayout->addWidget(anglePlotGroup);
+    pidPlotsLayout->addWidget(outputPlotGroup);
+    pidContentLayout->addLayout(pidPlotsLayout, 1);
+    pidLayout->addLayout(pidContentLayout);
     pageLayout->addWidget(pidGroup);
 
     auto *chassisGroup = new QGroupBox(QStringLiteral("底盘（组 0x20）"), this);
@@ -193,6 +219,8 @@ ChassisPage::ChassisPage(QWidget *parent)
 void ChassisPage::setConnected(bool connected) {
     connected_ = connected;
     if (!connected_) {
+        pidAnglePlot_->clear();
+        pidOutputPlot_->clear();
         values_.clear();
         connectionInitialValues_.clear();
         connectionInitialGroups_.clear();
@@ -224,6 +252,12 @@ void ChassisPage::setConnected(bool connected) {
         }
     }
     refreshRestoreButton();
+}
+
+void ChassisPage::setPidSample(const PidSample &sample) {
+    pidAnglePlot_->append(sample.timestampMs,
+                          {sample.targetDegrees, sample.actualDegrees});
+    pidOutputPlot_->append(sample.timestampMs, {sample.output});
 }
 
 void ChassisPage::setValues(const QVector<ParameterValue> &values) {
