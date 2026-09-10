@@ -5,11 +5,7 @@
 
 #include "protocol/ProtocolTypes.h"
 
-class QComboBox;
-class QLabel;
-class QLineEdit;
-class QPlainTextEdit;
-class QPushButton;
+class SerialDebugPanel;
 
 class TerminalPage : public QWidget {
     Q_OBJECT
@@ -25,24 +21,6 @@ public:
 signals:
     void rawSendRequested(QByteArray bytes);
 
-private slots:
-    void clearLog();
-    void togglePause();
-    void sendRaw();
-    void updateDisplayMode(int index);
-
 private:
-    QString formatBytes(const QByteArray &bytes) const;
-    void appendLine(const QString &direction, const QByteArray &bytes);
-
-    QComboBox *displayModeCombo_{};
-    QPlainTextEdit *logTextEdit_{};
-    QLineEdit *inputLineEdit_{};
-    QPushButton *sendButton_{};
-    QPushButton *clearButton_{};
-    QPushButton *pauseButton_{};
-    QLabel *statusLabel_{};
-    bool connected_{};
-    bool paused_{};
-    bool hexMode_{true};
+    SerialDebugPanel *panel_{};
 };

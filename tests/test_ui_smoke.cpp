@@ -31,6 +31,7 @@
 #include "pages/VisionPage.h"
 #include "protocol/FrameCodec.h"
 #include "protocol/FrameParser.h"
+#include "serial/SerialController.h"
 #include "widgets/TelemetryPlot.h"
 
 namespace {
@@ -141,6 +142,8 @@ int main(int argc, char **argv) {
         window.findChild<QComboBox *>("terminalDisplayModeCombo");
     auto *terminalLog =
         window.findChild<QPlainTextEdit *>("terminalLogTextEdit");
+    auto *fieldSerialLog =
+        window.findChild<QPlainTextEdit *>("fieldSerialLogTextEdit");
     auto *terminalInput =
         window.findChild<QLineEdit *>("terminalInputLineEdit");
     auto *terminalSend =
@@ -177,6 +180,7 @@ int main(int argc, char **argv) {
         window.findChild<QSpinBox *>("imuTelemetryRateSpinBox");
     auto *protocol = window.findChild<ProtocolClient *>();
     auto *device = window.findChild<DeviceClient *>();
+    auto *serialController = window.findChild<SerialController *>();
     auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
     if (!require(nav && nav->count() == 8, "navigation pages changed") ||
         !require(fieldPositionPage && fieldPositionPage->isEnabled() &&
@@ -259,11 +263,24 @@ int main(int argc, char **argv) {
                      ramOnlyNotice->text().contains(QStringLiteral("RAM")) &&
                      ramOnlyNotice->text().contains(QStringLiteral("Flash")),
                  "RAM-only notice is missing") ||
-        !require(protocol && device && heartbeatTimer &&
+        !require(protocol && device && serialController && heartbeatTimer &&
                      heartbeatTimer->interval() <= 500,
                  "window protocol or heartbeat service is missing")) {
         return 1;
     }
+
+    emit protocol->bytesReady(QByteArray::fromHex("12 34"));
+    emit serialController->bytesReceived(QByteArray::fromHex("ca fe"));
+    if (!require(fieldSerialLog &&
+                     terminalLog->toPlainText().contains(QStringLiteral("12 34")) &&
+                     fieldSerialLog->toPlainText().contains(QStringLiteral("12 34")) &&
+                     terminalLog->toPlainText().contains(QStringLiteral("CA FE")) &&
+                     fieldSerialLog->toPlainText().contains(QStringLiteral("CA FE")),
+                 "main window did not fan out the shared serial stream")) {
+        return 1;
+    }
+    terminalLog->clear();
+    fieldSerialLog->clear();
 
     terminalPage->appendTx(QByteArray::fromHex("aa 55"));
     terminalPage->appendRx(QByteArray("OK"));

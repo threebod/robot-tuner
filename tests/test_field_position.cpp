@@ -5,12 +5,14 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTimer>
 
 #include <cmath>
 #include <iostream>
 
 #include "pages/FieldPositionPage.h"
+#include "widgets/SerialDebugPanel.h"
 
 namespace {
 
@@ -66,8 +68,19 @@ int main(int argc, char **argv) {
     auto *source = page.findChild<QLabel *>("poseSourceLabel");
     auto *status = page.findChild<QLabel *>("poseStatusLabel");
     auto *map = page.findChild<FieldMapWidget *>("fieldMapWidget");
+    auto *splitter = page.findChild<QSplitter *>("fieldMonitorSplitter");
+    auto *serialPanel =
+        page.findChild<SerialDebugPanel *>("fieldSerialPanel");
+    auto *steering = page.findChild<QLabel *>("fieldSteeringAngleLabel");
+    auto *steeringStatus = page.findChild<QLabel *>("fieldSteeringStatusLabel");
+    auto *connection = page.findChild<QLabel *>("fieldConnectionStateLabel");
+    auto *emergency = page.findChild<QLabel *>("fieldEmergencyStateLabel");
+    auto *errorCode = page.findChild<QLabel *>("fieldErrorCodeLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
-                     source && status && map && simulation->isChecked(),
+                     source && status && map && simulation->isChecked() &&
+                     splitter && splitter->orientation() == Qt::Vertical &&
+                     serialPanel && steering && steeringStatus && connection &&
+                     emergency && errorCode,
                  "field position page controls are incomplete")) {
         return 1;
     }
@@ -130,11 +143,31 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    page.setConnectionState(QStringLiteral("设备已握手"), true);
+    ImuSample imuSample;
+    imuSample.timestampMs = 77;
+    imuSample.yawDegrees = -35.25;
+    page.setImuSample(imuSample);
+    DeviceStatus deviceStatus;
+    deviceStatus.emergency = 1;
+    deviceStatus.lastError = 0x1234;
+    page.setDeviceStatus(deviceStatus);
+    if (!require(connection->text().contains(QStringLiteral("设备已握手")) &&
+                     steering->text().contains(QStringLiteral("-35.25")) &&
+                     steeringStatus->text().contains(QStringLiteral("正常")) &&
+                     emergency->text().contains(QStringLiteral("急停")) &&
+                     errorCode->text().contains(QStringLiteral("1234")),
+                 "field monitor state was not updated")) {
+        return 1;
+    }
+
     QEventLoop timeoutLoop;
     QTimer::singleShot(560, &timeoutLoop, &QEventLoop::quit);
     timeoutLoop.exec();
     if (!require(status->text().contains(QStringLiteral("数据超时")),
-                 "pose was not marked stale after 500 ms")) {
+                 "pose was not marked stale after 500 ms") ||
+        !require(steeringStatus->text().contains(QStringLiteral("数据超时")),
+                 "HWT101 yaw was not marked stale after 500 ms")) {
         return 1;
     }
     return 0;

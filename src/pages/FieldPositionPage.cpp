@@ -4,16 +4,20 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+
+#include "widgets/SerialDebugPanel.h"
 
 namespace {
 
@@ -145,12 +149,16 @@ void FieldMapWidget::paintEvent(QPaintEvent *) {
 }
 
 FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
-    auto *layout = new QHBoxLayout(this);
-    map_ = new FieldMapWidget(this);
-    layout->addWidget(map_, 1);
+    auto *layout = new QVBoxLayout(this);
+    auto *splitter = new QSplitter(Qt::Vertical, this);
+    splitter->setObjectName(QStringLiteral("fieldMonitorSplitter"));
+    auto *topWidget = new QWidget(splitter);
+    auto *topLayout = new QHBoxLayout(topWidget);
+    map_ = new FieldMapWidget(topWidget);
+    topLayout->addWidget(map_, 1);
 
     auto *panel = new QVBoxLayout;
-    auto *title = new QLabel(QStringLiteral("场地位置同步"), this);
+    auto *title = new QLabel(QStringLiteral("场地位置同步"), topWidget);
     QFont titleFont = title->font();
     titleFont.setPointSize(titleFont.pointSize() + 3);
     titleFont.setBold(true);
@@ -158,30 +166,30 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     panel->addWidget(title);
     auto *notice = new QLabel(
         QStringLiteral("调试显示用途；现场布置可能偏离名义尺寸，不用于导航控制。"),
-        this);
+        topWidget);
     notice->setWordWrap(true);
     panel->addWidget(notice);
 
-    simulationCheckBox_ = new QCheckBox(QStringLiteral("本地模拟模式"), this);
+    simulationCheckBox_ = new QCheckBox(QStringLiteral("本地模拟模式"), topWidget);
     simulationCheckBox_->setObjectName(QStringLiteral("localSimulationCheckBox"));
     simulationCheckBox_->setChecked(true);
     panel->addWidget(simulationCheckBox_);
 
     auto *presetRow = new QHBoxLayout;
-    auto *preset1 = new QPushButton(QStringLiteral("启停区 1"), this);
+    auto *preset1 = new QPushButton(QStringLiteral("启停区 1"), topWidget);
     preset1->setObjectName(QStringLiteral("startZone1Button"));
-    auto *preset2 = new QPushButton(QStringLiteral("启停区 2"), this);
+    auto *preset2 = new QPushButton(QStringLiteral("启停区 2"), topWidget);
     preset2->setObjectName(QStringLiteral("startZone2Button"));
     presetRow->addWidget(preset1);
     presetRow->addWidget(preset2);
     panel->addLayout(presetRow);
 
     auto *form = new QFormLayout;
-    xSpinBox_ = new QDoubleSpinBox(this);
+    xSpinBox_ = new QDoubleSpinBox(topWidget);
     xSpinBox_->setObjectName(QStringLiteral("poseXSpinBox"));
-    ySpinBox_ = new QDoubleSpinBox(this);
+    ySpinBox_ = new QDoubleSpinBox(topWidget);
     ySpinBox_->setObjectName(QStringLiteral("poseYSpinBox"));
-    yawSpinBox_ = new QDoubleSpinBox(this);
+    yawSpinBox_ = new QDoubleSpinBox(topWidget);
     yawSpinBox_->setObjectName(QStringLiteral("poseYawSpinBox"));
     for (QDoubleSpinBox *coordinate : {xSpinBox_, ySpinBox_}) {
         coordinate->setRange(-2147483648.0, 2147483647.0);
@@ -196,27 +204,58 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     form->addRow(QStringLiteral("航向（逆时针为正）"), yawSpinBox_);
     panel->addLayout(form);
 
-    auto *apply = new QPushButton(QStringLiteral("应用位姿"), this);
+    auto *apply = new QPushButton(QStringLiteral("应用位姿"), topWidget);
     apply->setObjectName(QStringLiteral("poseApplyButton"));
     panel->addWidget(apply);
 
-    valueLabel_ = new QLabel(QStringLiteral("x=0.0 mm  y=0.0 mm  yaw=0.00°"), this);
+    valueLabel_ = new QLabel(QStringLiteral("x=0.0 mm  y=0.0 mm  yaw=0.00°"), topWidget);
     valueLabel_->setObjectName(QStringLiteral("poseValueLabel"));
-    sourceLabel_ = new QLabel(QStringLiteral("数据来源：尚无数据"), this);
+    sourceLabel_ = new QLabel(QStringLiteral("数据来源：尚无数据"), topWidget);
     sourceLabel_->setObjectName(QStringLiteral("poseSourceLabel"));
-    updatedLabel_ = new QLabel(QStringLiteral("更新时间：—"), this);
+    updatedLabel_ = new QLabel(QStringLiteral("更新时间：—"), topWidget);
     updatedLabel_->setObjectName(QStringLiteral("poseUpdatedLabel"));
-    statusLabel_ = new QLabel(QStringLiteral("状态：数据超时"), this);
+    statusLabel_ = new QLabel(QStringLiteral("状态：数据超时"), topWidget);
     statusLabel_->setObjectName(QStringLiteral("poseStatusLabel"));
-    capabilityLabel_ = new QLabel(QStringLiteral("设备位姿能力：未声明"), this);
+    capabilityLabel_ = new QLabel(QStringLiteral("设备位姿能力：未声明"), topWidget);
     capabilityLabel_->setObjectName(QStringLiteral("poseCapabilityLabel"));
     panel->addWidget(valueLabel_);
     panel->addWidget(sourceLabel_);
     panel->addWidget(updatedLabel_);
     panel->addWidget(statusLabel_);
     panel->addWidget(capabilityLabel_);
+
+    auto *monitorGroup = new QGroupBox(QStringLiteral("主监控状态"), topWidget);
+    auto *monitorForm = new QFormLayout(monitorGroup);
+    steeringAngleLabel_ = new QLabel(QStringLiteral("—"), monitorGroup);
+    steeringAngleLabel_->setObjectName(QStringLiteral("fieldSteeringAngleLabel"));
+    steeringUpdatedLabel_ = new QLabel(QStringLiteral("—"), monitorGroup);
+    steeringUpdatedLabel_->setObjectName(QStringLiteral("fieldSteeringUpdatedLabel"));
+    steeringStatusLabel_ = new QLabel(QStringLiteral("数据超时"), monitorGroup);
+    steeringStatusLabel_->setObjectName(QStringLiteral("fieldSteeringStatusLabel"));
+    connectionStateLabel_ = new QLabel(QStringLiteral("未连接"), monitorGroup);
+    connectionStateLabel_->setObjectName(QStringLiteral("fieldConnectionStateLabel"));
+    emergencyStateLabel_ = new QLabel(QStringLiteral("急停状态：未知"), monitorGroup);
+    emergencyStateLabel_->setObjectName(QStringLiteral("fieldEmergencyStateLabel"));
+    errorCodeLabel_ = new QLabel(QStringLiteral("0x0000"), monitorGroup);
+    errorCodeLabel_->setObjectName(QStringLiteral("fieldErrorCodeLabel"));
+    monitorForm->addRow(QStringLiteral("转向角（HWT101 Yaw）"), steeringAngleLabel_);
+    monitorForm->addRow(QStringLiteral("IMU 样本时间"), steeringUpdatedLabel_);
+    monitorForm->addRow(QStringLiteral("IMU 状态"), steeringStatusLabel_);
+    monitorForm->addRow(QStringLiteral("连接状态"), connectionStateLabel_);
+    monitorForm->addRow(QStringLiteral("急停状态"), emergencyStateLabel_);
+    monitorForm->addRow(QStringLiteral("设备错误码"), errorCodeLabel_);
+    panel->addWidget(monitorGroup);
     panel->addStretch();
-    layout->addLayout(panel);
+    topLayout->addLayout(panel);
+
+    serialPanel_ = new SerialDebugPanel(QStringLiteral("fieldSerial"), splitter);
+    serialPanel_->setObjectName(QStringLiteral("fieldSerialPanel"));
+    splitter->addWidget(topWidget);
+    splitter->addWidget(serialPanel_);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    splitter->setSizes({600, 300});
+    layout->addWidget(splitter);
 
     staleTimer_ = new QTimer(this);
     staleTimer_->setInterval(50);
@@ -230,6 +269,8 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
             &FieldPositionPage::applyInputPose);
     connect(map_, &FieldMapWidget::fieldPointSelected, this,
             &FieldPositionPage::selectFieldPoint);
+    connect(serialPanel_, &SerialDebugPanel::rawSendRequested, this,
+            &FieldPositionPage::rawSendRequested);
 }
 
 void FieldPositionPage::setPoseSample(PoseSample sample,
@@ -257,6 +298,55 @@ void FieldPositionPage::setPoseSample(PoseSample sample,
 void FieldPositionPage::setPoseCapabilityAvailable(bool available) {
     capabilityLabel_->setText(available ? QStringLiteral("设备位姿能力：已声明")
                                         : QStringLiteral("设备位姿能力：未声明"));
+}
+
+void FieldPositionPage::setConnectionState(const QString &state,
+                                           bool connected) {
+    connectionStateLabel_->setText(state);
+    connectionStateLabel_->setStyleSheet(
+        connected ? QString() : QStringLiteral("color: #b91c1c; font-weight: bold;"));
+    serialPanel_->setConnected(connected);
+}
+
+void FieldPositionPage::setImuSample(ImuSample sample) {
+    steeringAngleLabel_->setText(
+        QStringLiteral("%1°").arg(sample.yawDegrees, 0, 'f', 2));
+    steeringUpdatedLabel_->setText(
+        QStringLiteral("%1 ms（%2）")
+            .arg(sample.timestampMs)
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz"))));
+    lastImuUpdate_.restart();
+    refreshStatus();
+}
+
+void FieldPositionPage::setDeviceStatus(DeviceStatus status) {
+    setEmergencyLocked(status.emergency != 0);
+    const QString errorHex =
+        QStringLiteral("%1").arg(status.lastError, 4, 16, QLatin1Char('0')).toUpper();
+    errorCodeLabel_->setText(QStringLiteral("0x%1").arg(errorHex));
+    errorCodeLabel_->setStyleSheet(
+        status.lastError == 0 ? QString()
+                              : QStringLiteral("color: #b91c1c; font-weight: bold;"));
+}
+
+void FieldPositionPage::setDeviceError(const QString &message) {
+    errorCodeLabel_->setText(message);
+    errorCodeLabel_->setStyleSheet(QStringLiteral("color: #b91c1c; font-weight: bold;"));
+}
+
+void FieldPositionPage::setEmergencyLocked(bool locked) {
+    emergencyStateLabel_->setText(locked ? QStringLiteral("急停锁定")
+                                         : QStringLiteral("正常"));
+    emergencyStateLabel_->setStyleSheet(
+        locked ? QStringLiteral("color: #b91c1c; font-weight: bold;") : QString());
+}
+
+void FieldPositionPage::appendSerialTx(const QByteArray &bytes) {
+    serialPanel_->appendTx(bytes);
+}
+
+void FieldPositionPage::appendSerialRx(const QByteArray &bytes) {
+    serialPanel_->appendRx(bytes);
 }
 
 void FieldPositionPage::selectFieldPoint(QPointF fieldPoint) {
@@ -289,6 +379,14 @@ void FieldPositionPage::applyPreset(qint32 xMm, qint32 yMm) {
 }
 
 void FieldPositionPage::refreshStatus() {
+    if (!lastImuUpdate_.isValid() || lastImuUpdate_.elapsed() > 500) {
+        steeringStatusLabel_->setText(QStringLiteral("数据超时"));
+        steeringStatusLabel_->setStyleSheet(
+            QStringLiteral("color: #b91c1c; font-weight: bold;"));
+    } else {
+        steeringStatusLabel_->setText(QStringLiteral("正常"));
+        steeringStatusLabel_->setStyleSheet({});
+    }
     if (!lastUpdate_.isValid() || lastUpdate_.elapsed() > 500) {
         statusLabel_->setText(outOfBounds_
                                   ? QStringLiteral("状态：数据超时；越界（图标已限制在边界，数值保留原值）")

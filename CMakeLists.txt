@@ -31,6 +31,8 @@ add_executable(robot_tuner
     src/pages/VisionPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
+    src/widgets/SerialDebugPanel.cpp
+    src/widgets/SerialDebugPanel.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
@@ -73,6 +75,8 @@ add_executable(test_ui_smoke
     src/pages/VisionPage.h
     src/widgets/TelemetryPlot.cpp
     src/widgets/TelemetryPlot.h
+    src/widgets/SerialDebugPanel.cpp
+    src/widgets/SerialDebugPanel.h
     src/app/MainWindow.cpp
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
@@ -214,9 +218,19 @@ add_executable(test_field_position
     src/pages/FieldPositionPage.cpp
     src/pages/FieldPositionPage.h
     src/device/TelemetryTypes.h
+    src/widgets/SerialDebugPanel.cpp
+    src/widgets/SerialDebugPanel.h
 )
 target_include_directories(test_field_position PRIVATE src)
 target_link_libraries(test_field_position PRIVATE Qt6::Widgets)
+
+add_executable(test_serial_debug_panel
+    tests/test_serial_debug_panel.cpp
+    src/widgets/SerialDebugPanel.cpp
+    src/widgets/SerialDebugPanel.h
+)
+target_include_directories(test_serial_debug_panel PRIVATE src)
+target_link_libraries(test_serial_debug_panel PRIVATE Qt6::Widgets)
 
 set(STM32_HOST_PROTOCOL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/host_protocol")
 add_executable(test_stm32_protocol
@@ -351,6 +365,11 @@ set_tests_properties(test_telemetry_plot PROPERTIES
 )
 add_test(NAME test_field_position COMMAND test_field_position)
 set_tests_properties(test_field_position PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_serial_debug_panel COMMAND test_serial_debug_panel)
+set_tests_properties(test_serial_debug_panel PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )

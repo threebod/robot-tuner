@@ -161,11 +161,17 @@ MainWindow::MainWindow(QWidget *parent)
                 if (terminalPage_ != nullptr) {
                     terminalPage_->appendTx(bytes);
                 }
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->appendSerialTx(bytes);
+                }
             });
     connect(&serial_, &SerialController::bytesReceived, this,
             [this](QByteArray bytes) {
                 if (terminalPage_ != nullptr) {
                     terminalPage_->appendRx(bytes);
+                }
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->appendSerialRx(bytes);
                 }
             });
     connect(&protocol_, &ProtocolClient::responseReceived, this,
@@ -180,8 +186,16 @@ MainWindow::MainWindow(QWidget *parent)
                     terminalPage_->appendDecodedFrame(frame);
                 }
             });
-    connect(terminalPage_, &TerminalPage::rawSendRequested, this,
-            [this](QByteArray bytes) { serial_.write(QByteArrayView(bytes)); });
+    const auto sendRaw = [this](QByteArray bytes) {
+        if (serial_.write(QByteArrayView(bytes)) < 0) {
+            return;
+        }
+        terminalPage_->appendTx(bytes);
+        fieldPositionPage_->appendSerialTx(bytes);
+    };
+    connect(terminalPage_, &TerminalPage::rawSendRequested, this, sendRaw);
+    connect(fieldPositionPage_, &FieldPositionPage::rawSendRequested, this,
+            sendRaw);
     connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
             [this](qint64 latencyMs) {
                 if (overviewPage_ != nullptr) {
@@ -205,6 +219,8 @@ MainWindow::MainWindow(QWidget *parent)
                 if (fieldPositionPage_ != nullptr) {
                     fieldPositionPage_->setPoseCapabilityAvailable(
                         (info.capabilities & protocol::Capability::Pose) != 0);
+                    fieldPositionPage_->setConnectionState(
+                        QStringLiteral("设备已握手"), true);
                 }
                 device_.getStatus();
                 device_.setTelemetry(kDefaultTelemetryMask,
@@ -223,6 +239,9 @@ MainWindow::MainWindow(QWidget *parent)
                 }
                 if (overviewPage_ != nullptr) {
                     overviewPage_->setImuSample(sample);
+                }
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->setImuSample(sample);
                 }
             });
     connect(&device_, &DeviceClient::pidSampleReceived, this,
@@ -253,6 +272,9 @@ MainWindow::MainWindow(QWidget *parent)
                 }
                 if (imuPage_ != nullptr) {
                     imuPage_->setStatus(status);
+                }
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->setDeviceStatus(status);
                 }
             });
     connect(&device_, &DeviceClient::telemetryConfigured, this,
@@ -337,6 +359,10 @@ void MainWindow::handleSerialOpened() {
         overviewPage_->setLinkState(QStringLiteral("串口已连接，等待设备握手"));
         overviewPage_->setLatency(-1);
     }
+    if (fieldPositionPage_ != nullptr) {
+        fieldPositionPage_->setConnectionState(
+            QStringLiteral("串口已连接，等待设备握手"), true);
+    }
     setDeviceControlsEnabled(false);
     emergencyStopButton_->setEnabled(true);
     clearEmergencyStopButton_->setEnabled(false);
@@ -357,6 +383,7 @@ void MainWindow::handleSerialClosed() {
     }
     if (fieldPositionPage_ != nullptr) {
         fieldPositionPage_->setPoseCapabilityAvailable(false);
+        fieldPositionPage_->setConnectionState(QStringLiteral("未连接"), false);
     }
     setDeviceControlsEnabled(false);
     emergencyStopButton_->setEnabled(false);
@@ -367,6 +394,10 @@ void MainWindow::handleSerialError(QString message) {
     connectionStatusLabel_->setText(std::move(message));
     if (overviewPage_ != nullptr) {
         overviewPage_->setLinkState(connectionStatusLabel_->text());
+    }
+    if (fieldPositionPage_ != nullptr) {
+        fieldPositionPage_->setConnectionState(connectionStatusLabel_->text(),
+                                               serialConnected_);
     }
 }
 
@@ -380,6 +411,9 @@ void MainWindow::handleDeviceError(QString message) {
     if (actionPage_ != nullptr) {
         actionPage_->setDeviceError(message);
     }
+    if (fieldPositionPage_ != nullptr) {
+        fieldPositionPage_->setDeviceError(message);
+    }
     if (!device_.handshakeComplete()) {
         heartbeatTimer_->stop();
         setDeviceControlsEnabled(false);
@@ -388,6 +422,10 @@ void MainWindow::handleDeviceError(QString message) {
         connectionStatusLabel_->setText(unavailable);
         if (overviewPage_ != nullptr) {
             overviewPage_->setLinkState(QStringLiteral("未连接/不可用"));
+        }
+        if (fieldPositionPage_ != nullptr) {
+            fieldPositionPage_->setConnectionState(unavailable,
+                                                   serialConnected_);
         }
     }
 }
@@ -480,6 +518,9 @@ void MainWindow::sendHeartbeat() {
 void MainWindow::handleEmergencyStateChanged(bool locked) {
     if (actionPage_ != nullptr) {
         actionPage_->setEmergencyLocked(locked);
+    }
+    if (fieldPositionPage_ != nullptr) {
+        fieldPositionPage_->setEmergencyLocked(locked);
     }
     if (clearEmergencyStopButton_ != nullptr) {
         clearEmergencyStopButton_->setEnabled(
