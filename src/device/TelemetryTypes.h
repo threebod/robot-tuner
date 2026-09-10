@@ -68,6 +68,13 @@ struct PidSample {
     double actual{};
 };
 
+struct PoseSample {
+    quint32 timestampMs{};
+    qint32 xMm{};
+    qint32 yMm{};
+    double yawDegrees{};
+};
+
 struct DeviceStatus {
     quint8 mode{};
     quint8 emergency{};
@@ -83,4 +90,5 @@ Q_DECLARE_METATYPE(QVector<ParameterValue>)
 Q_DECLARE_METATYPE(DeviceInfo)
 Q_DECLARE_METATYPE(ImuSample)
 Q_DECLARE_METATYPE(PidSample)
+Q_DECLARE_METATYPE(PoseSample)
 Q_DECLARE_METATYPE(DeviceStatus)

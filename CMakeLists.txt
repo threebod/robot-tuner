@@ -15,6 +15,8 @@ add_executable(robot_tuner
     src/main.cpp
     src/pages/ChassisPage.cpp
     src/pages/ChassisPage.h
+    src/pages/FieldPositionPage.cpp
+    src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
     src/pages/OverviewPage.cpp
@@ -55,6 +57,8 @@ add_executable(test_ui_smoke
     tests/test_ui_smoke.cpp
     src/pages/ChassisPage.cpp
     src/pages/ChassisPage.h
+    src/pages/FieldPositionPage.cpp
+    src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
     src/pages/OverviewPage.cpp
@@ -205,6 +209,15 @@ add_executable(test_telemetry_plot
 target_include_directories(test_telemetry_plot PRIVATE src)
 target_link_libraries(test_telemetry_plot PRIVATE Qt6::Widgets)
 
+add_executable(test_field_position
+    tests/test_field_position.cpp
+    src/pages/FieldPositionPage.cpp
+    src/pages/FieldPositionPage.h
+    src/device/TelemetryTypes.h
+)
+target_include_directories(test_field_position PRIVATE src)
+target_link_libraries(test_field_position PRIVATE Qt6::Widgets)
+
 set(STM32_HOST_PROTOCOL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../yyb_stm32/host_protocol")
 add_executable(test_stm32_protocol
     tests/test_stm32_protocol.c
@@ -333,6 +346,11 @@ set_tests_properties(test_end_to_end PROPERTIES
 )
 add_test(NAME test_telemetry_plot COMMAND test_telemetry_plot)
 set_tests_properties(test_telemetry_plot PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_field_position COMMAND test_field_position)
+set_tests_properties(test_field_position PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )

@@ -19,6 +19,7 @@ class ImuPage;
 class ActionTestPage;
 class TerminalPage;
 class VisionPage;
+class FieldPositionPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -64,5 +65,6 @@ private:
     ActionTestPage *actionPage_{};
     TerminalPage *terminalPage_{};
     VisionPage *visionPage_{};
+    FieldPositionPage *fieldPositionPage_{};
     bool serialConnected_{};
 };

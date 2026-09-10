@@ -180,6 +180,47 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    PoseSample requestedPose;
+    requestedPose.xMm = -120;
+    requestedPose.yMm = 2600;
+    requestedPose.yawDegrees = -12.34;
+    requestBytes.clear();
+    if (!require(!device.setPose(requestedPose),
+                 "SET_POSE was allowed without the pose capability") ||
+        !require(requestBytes.isEmpty(),
+                 "unsupported SET_POSE emitted protocol bytes")) {
+        return 1;
+    }
+
+    ProtocolClient poseProtocol;
+    DeviceClient poseDevice(&poseProtocol);
+    QByteArray poseRequestBytes;
+    QObject::connect(&poseProtocol, &ProtocolClient::bytesReady,
+                     [&](const QByteArray &bytes) { poseRequestBytes = bytes; });
+    poseDevice.hello();
+    QByteArray poseHelloPayload;
+    poseHelloPayload.append(char(1));
+    poseHelloPayload.append(char(1));
+    poseHelloPayload.append(char(0));
+    poseHelloPayload.append(char(0));
+    appendU32(&poseHelloPayload, protocol::Capability::Pose);
+    feedResponse(&poseProtocol, poseRequestBytes, protocol::Command::Hello,
+                 poseHelloPayload);
+    poseRequestBytes.clear();
+    if (!require(poseDevice.setPose(requestedPose),
+                 "SET_POSE was rejected with the pose capability")) {
+        return 1;
+    }
+    const protocol::Frame setPoseFrame = capturedFrame(poseRequestBytes);
+    if (!require(setPoseFrame.command ==
+                     static_cast<quint8>(protocol::Command::SetPose),
+                 "SET_POSE command is incorrect") ||
+        !require(setPoseFrame.payload ==
+                     QByteArray::fromHex("88 ff ff ff 28 0a 00 00 2e fb"),
+                 "SET_POSE little-endian signed payload is incorrect")) {
+        return 1;
+    }
+
     int aggregatedPidCount = 0;
     QVector<ParameterValue> aggregatedPidValues;
     QObject::connect(&device, &DeviceClient::parameterGroupReceived,
@@ -725,6 +766,43 @@ int main(int argc, char **argv) {
                      std::abs(sample.pitchDegrees + 90.0) < 1e-9 &&
                      std::abs(sample.yawDegrees - 45.0) < 1e-9,
                  "IMU angle conversion is incorrect")) {
+        return 1;
+    }
+
+    int poseCount = 0;
+    PoseSample pose;
+    QObject::connect(&device, &DeviceClient::poseSampleReceived,
+                     [&](const PoseSample &received) {
+                         ++poseCount;
+                         pose = received;
+                     });
+    protocol::Frame poseEvent;
+    poseEvent.flags = protocol::Event;
+    poseEvent.sequence = 0;
+    poseEvent.command =
+        static_cast<quint8>(protocol::Command::PoseTelemetry);
+    appendU32(&poseEvent.payload, 0x12345678);
+    appendU32(&poseEvent.payload, static_cast<quint32>(-120));
+    appendU32(&poseEvent.payload, static_cast<quint32>(2600));
+    appendI16(&poseEvent.payload, -1234);
+    protocol.ingestBytes(QByteArrayView(encodeFrame(poseEvent)));
+    if (!require(poseCount == 1, "a pose event was not decoded") ||
+        !require(pose.timestampMs == 0x12345678,
+                 "pose timestamp endianness is incorrect") ||
+        !require(pose.xMm == -120 && pose.yMm == 2600,
+                 "signed pose coordinates are incorrect") ||
+        !require(std::abs(pose.yawDegrees + 12.34) < 1e-9,
+                 "signed pose yaw is incorrect")) {
+        return 1;
+    }
+    poseEvent.payload.chop(1);
+    const int poseErrorsBefore = deviceErrorCount;
+    protocol.ingestBytes(QByteArrayView(encodeFrame(poseEvent)));
+    if (!require(poseCount == 1,
+                 "an invalid-length pose event was accepted") ||
+        !require(deviceErrorCount == poseErrorsBefore + 1 &&
+                     latestError.contains(QStringLiteral("0x04")),
+                 "an invalid-length pose event did not report LENGTH")) {
         return 1;
     }
 

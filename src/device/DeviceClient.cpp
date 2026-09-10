@@ -4,11 +4,13 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace {
 
 constexpr int kImuPayloadWithTimestamp = 4 + 9 * 2;
 constexpr int kPidPayloadSize = 4 + 3 * 2;
+constexpr int kPosePayloadSize = 4 + 4 + 4 + 2;
 constexpr quint16 kTestUnlockDurationMs = 30000;
 constexpr quint8 kPidParameterGroup = 0x10;
 constexpr int kPidPageItemCount = 18;
@@ -215,6 +217,7 @@ DeviceClient::DeviceClient(ProtocolClient &protocol, QObject *parent)
 
 bool DeviceClient::hello() {
     handshakeComplete_ = false;
+    capabilities_ = 0;
     helloPending_ = false;
     resetParameterGroupRead();
     if (protocol_ != nullptr) {
@@ -333,6 +336,28 @@ bool DeviceClient::calibrateImu() {
         return reject(QStringLiteral("设备尚未完成握手"), 0x09);
     }
     return send(protocol::Command::ImuCalibrate, {});
+}
+
+bool DeviceClient::setPose(PoseSample sample) {
+    if (!handshakeComplete_) {
+        return reject(QStringLiteral("设备尚未完成握手"), 0x09);
+    }
+    if ((capabilities_ & protocol::Capability::Pose) == 0) {
+        return reject(QStringLiteral("设备未声明位姿能力"), 0x02);
+    }
+    const double yawCentidegrees = sample.yawDegrees * 100.0;
+    if (!std::isfinite(yawCentidegrees) ||
+        yawCentidegrees < std::numeric_limits<qint16>::min() ||
+        yawCentidegrees > std::numeric_limits<qint16>::max()) {
+        return reject(QStringLiteral("航向角超出协议范围"), 0x07);
+    }
+
+    QByteArray payload;
+    payload.reserve(10);
+    appendU32(&payload, static_cast<quint32>(sample.xMm));
+    appendU32(&payload, static_cast<quint32>(sample.yMm));
+    appendI16(&payload, static_cast<qint16>(std::lround(yawCentidegrees)));
+    return send(protocol::Command::SetPose, payload);
 }
 
 bool DeviceClient::unlockTests() {
@@ -713,6 +738,9 @@ void DeviceClient::handleResponse(protocol::Frame frame) {
     case protocol::Command::ImuCalibrate:
         decodeCalibrationState(frame.payload);
         break;
+    case protocol::Command::SetPose:
+        decodeEmptyResponse(frame.payload, protocol::Command::SetPose);
+        break;
     case protocol::Command::TestUnlock:
         decodeTestUnlock(frame.payload);
         break;
@@ -739,6 +767,9 @@ void DeviceClient::handleEvent(protocol::Frame frame) {
     case protocol::Command::StatusTelemetry:
         decodeStatus(frame.payload);
         break;
+    case protocol::Command::PoseTelemetry:
+        decodePose(frame.payload);
+        break;
     default:
         break;
     }
@@ -751,14 +782,17 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
     if (helloPending_ && sequence == helloSequence_) {
         helloPending_ = false;
         handshakeComplete_ = false;
+        capabilities_ = 0;
     } else if (handshakeComplete_) {
         handshakeComplete_ = false;
         helloPending_ = false;
+        capabilities_ = 0;
     }
     failClosed();
     if (reason == QStringLiteral("连接已断开")) {
         handshakeComplete_ = false;
         helloPending_ = false;
+        capabilities_ = 0;
     }
     emit deviceError(reason);
     emit terminalLog(reason);
@@ -766,6 +800,7 @@ void DeviceClient::handleRequestFailure(quint8 sequence, QString reason) {
 
 void DeviceClient::handleConnectionCleared() {
     handshakeComplete_ = false;
+    capabilities_ = 0;
     helloPending_ = false;
     if (pidGroupReadPending_) {
         failParameterGroupRead(QStringLiteral("连接已断开"));
@@ -795,6 +830,7 @@ void DeviceClient::decodeHello(const QByteArray &payload) {
         reportError(0x01, QStringLiteral("设备协议版本不兼容"));
         return;
     }
+    capabilities_ = info.capabilities;
     handshakeComplete_ = true;
     emit handshakeCompleted(info);
 }
@@ -999,6 +1035,19 @@ void DeviceClient::decodePid(const QByteArray &payload) {
     emit pidSampleReceived(sample);
 }
 
+void DeviceClient::decodePose(const QByteArray &payload) {
+    if (payload.size() != kPosePayloadSize) {
+        reportError(0x04, QStringLiteral("位姿遥测长度错误"));
+        return;
+    }
+    PoseSample sample;
+    sample.timestampMs = readU32(payload, 0);
+    sample.xMm = static_cast<qint32>(readU32(payload, 4));
+    sample.yMm = static_cast<qint32>(readU32(payload, 8));
+    sample.yawDegrees = static_cast<double>(readI16(payload, 12)) / 100.0;
+    emit poseSampleReceived(sample);
+}
+
 void DeviceClient::decodeStatus(const QByteArray &payload) {
     if (payload.size() != 5) {
         failClosed();
@@ -1084,7 +1133,9 @@ void DeviceClient::decodeEmptyResponse(const QByteArray &payload,
                                        protocol::Command command) {
     if (!payload.isEmpty()) {
         failClosed();
-        reportError(0x04, QStringLiteral("安全动作响应长度错误"));
+        reportError(0x04, command == protocol::Command::SetPose
+                              ? QStringLiteral("位姿设置响应长度错误")
+                              : QStringLiteral("安全动作响应长度错误"));
         return;
     }
     switch (command) {

@@ -24,6 +24,7 @@ public:
                            const QVector<ParameterValue> &values);
     bool setTelemetry(quint8 mask, quint16 periodMs);
     bool calibrateImu();
+    bool setPose(PoseSample sample);
 
     // Controlled test actions.  These methods validate the host-side safety
     // envelope before creating a protocol request; the STM32 applies the
@@ -53,6 +54,7 @@ signals:
     void parameterGroupReadFailed(quint8 group, QString reason);
     void imuSampleReceived(ImuSample sample);
     void pidSampleReceived(PidSample sample);
+    void poseSampleReceived(PoseSample sample);
     void statusReceived(DeviceStatus status);
     void telemetryConfigured(quint8 acceptedMask, quint16 actualPeriodMs);
     void imuCalibrationStateChanged(quint8 state);
@@ -80,6 +82,7 @@ private:
     void resetParameterGroupRead();
     void decodeImu(const QByteArray &payload);
     void decodePid(const QByteArray &payload);
+    void decodePose(const QByteArray &payload);
     void decodeStatus(const QByteArray &payload);
     void decodeStatusResponse(const QByteArray &payload);
     void decodeTelemetryConfiguration(const QByteArray &payload);
@@ -113,6 +116,7 @@ private:
     QVector<ParameterValue> pidGroupValues_;
     bool testsUnlocked_{};
     bool emergencyLocked_{};
+    quint32 capabilities_{};
     qint64 unlockDurationMs_{};
     QElapsedTimer unlockElapsed_;
     QTimer unlockTimer_;

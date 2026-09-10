@@ -14,6 +14,7 @@
 
 #include "pages/ActionTestPage.h"
 #include "pages/ChassisPage.h"
+#include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/OverviewPage.h"
@@ -23,7 +24,7 @@
 namespace {
 
 static const QStringList kPages = {
-    "总览", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
+    "总览", "场地定位", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
     "串口终端", "视觉（预留）"
 };
 
@@ -92,6 +93,9 @@ MainWindow::MainWindow(QWidget *parent)
         if (pageName == QStringLiteral("总览")) {
             overviewPage_ = new OverviewPage(pageStack_);
             page = overviewPage_;
+        } else if (pageName == QStringLiteral("场地定位")) {
+            fieldPositionPage_ = new FieldPositionPage(pageStack_);
+            page = fieldPositionPage_;
         } else if (pageName == QStringLiteral("底盘与 PID")) {
             chassisPage_ = new ChassisPage(pageStack_);
             page = chassisPage_;
@@ -198,6 +202,10 @@ MainWindow::MainWindow(QWidget *parent)
                     overviewPage_->setDeviceInfo(info);
                     overviewPage_->setLinkState(QStringLiteral("设备已握手"));
                 }
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->setPoseCapabilityAvailable(
+                        (info.capabilities & protocol::Capability::Pose) != 0);
+                }
                 device_.getStatus();
                 device_.setTelemetry(kDefaultTelemetryMask,
                                      kDefaultTelemetryPeriodMs);
@@ -226,6 +234,15 @@ MainWindow::MainWindow(QWidget *parent)
                     overviewPage_->setPidSample(sample);
                 }
             });
+    connect(&device_, &DeviceClient::poseSampleReceived, this,
+            [this](PoseSample sample) {
+                if (fieldPositionPage_ != nullptr) {
+                    fieldPositionPage_->setPoseSample(sample,
+                                                      QStringLiteral("串口遥测"));
+                }
+            });
+    connect(fieldPositionPage_, &FieldPositionPage::setPoseRequested,
+            &device_, &DeviceClient::setPose);
     connect(&device_, &DeviceClient::statusReceived, this,
             [this](DeviceStatus status) {
                 if (overviewPage_ != nullptr) {
@@ -335,6 +352,9 @@ void MainWindow::handleSerialClosed() {
         overviewPage_->setLinkState(QStringLiteral("未连接"));
         overviewPage_->setLatency(-1);
     }
+    if (fieldPositionPage_ != nullptr) {
+        fieldPositionPage_->setPoseCapabilityAvailable(false);
+    }
     setDeviceControlsEnabled(false);
     emergencyStopButton_->setEnabled(false);
     clearEmergencyStopButton_->setEnabled(false);
@@ -401,7 +421,8 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
     }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
-            if (pageStack_->widget(index) == actionPage_ ||
+            if (pageStack_->widget(index) == fieldPositionPage_ ||
+                pageStack_->widget(index) == actionPage_ ||
                 pageStack_->widget(index) == terminalPage_) {
                 continue;
             }

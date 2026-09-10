@@ -18,8 +18,9 @@ length:u16_le | payload:length | crc16:u16_le
 ## 握手、链路与调试模式
 
 上位机连接后应先发送 `HELLO`，确认响应中的 `protocol=1`，再读取参数、订阅遥测或
-请求调试动作。当前 STM32 `host_protocol` 的 `capabilities` 为 `0`，能力位保留，不能
-据此假设尚未声明的硬件功能。
+请求调试动作。当前 STM32 `host_protocol` 的 `capabilities` 为 `0`，能力位 `0x00000001`
+保留给位姿功能。只有设备显式置位后，上位机才允许发送 `SET_POSE`；旧固件未声明时
+不得发送该命令。
 
 设备以收到的第一条合法 `HELLO` 确定 `active_link`（USB 或 Bluetooth），并只为该链路
 记录握手完成状态；另一链路的 `HELLO` 返回 `BUSY`，不会改变活动链路或把另一链路标记
@@ -53,6 +54,7 @@ payload 的第一个字节是 `error:u8`。
 | `SET_PARAM_GROUP` | `0x11` | `group:u8 count:u8 [id:u16 type:u8 value:typed] * count` | `group:u8 count:u8 [id:u16 type:u8 applied_value:typed] * count` |
 | `SET_TELEMETRY` | `0x20` | `mask:u8 period_ms:u16` | `accepted_mask:u8 actual_period_ms:u16` |
 | `IMU_CALIBRATE` | `0x21` | 空 | `state:u8` |
+| `SET_POSE` | `0x22` | `x_mm:i32 y_mm:i32 yaw_cdeg:i16` | 空 |
 | `TEST_UNLOCK` | `0x30` | 空 | `unlock_duration_ms:u16` |
 | `TEST_ACTION` | `0x31` | 见动作表 | 空 |
 | `STOP` | `0x32` | 空 | 空 |
@@ -61,12 +63,17 @@ payload 的第一个字节是 `error:u8`。
 | `STATUS_TELEMETRY` | `0x80` | 事件 | `mode:u8 emergency:u8 unlocked:u8 last_error:u16` |
 | `IMU_TELEMETRY` | `0x81` | 事件 | `timestamp_ms:u32 ax:i16 ay:i16 az:i16 gx:i16 gy:i16 gz:i16 roll:i16 pitch:i16 yaw:i16` |
 | `PID_TELEMETRY` | `0x82` | 事件 | `timestamp_ms:u32 target_cdeg:i16 actual_cdeg:i16 output_centi:i16` |
+| `POSE_TELEMETRY` | `0x83` | 事件 | `timestamp_ms:u32 x_mm:i32 y_mm:i32 yaw_cdeg:i16` |
 
 `IMU_CALIBRATE` 的 `state` 为 `0=started`、`1=completed`、`2=failed`。设备支持
 的遥测 mask 由固件定义；USB 和 HC-05 链路均使用 115200 baud，IMU 频率范围均为
 1–50 Hz，设备在响应中返回实际采用周期。RAM 参数 `0x4000` 是实际 IMU/遥测频率的
 上限配置，`SET_TELEMETRY` 响应中的 `actual_period_ms` 由该配置限幅后计算，不能仅把
 请求 period 当作固件实际频率。
+
+`POSE_TELEMETRY` 的 payload 固定为 14 字节，`SET_POSE` 的 payload 固定为 10 字节；
+均使用小端有符号坐标和百分之一度航向。位姿能力尚未进入当前 `0x07` 遥测掩码，现有
+订阅和连接行为保持不变，后续固件接入方式见 `stm32_pose_integration.md`。
 
 `GET_PARAM_GROUP` 的 `page` 为可选的从 0 开始的分页号；省略时等同于 `page=0`。
 单帧最多承载 18 条参数记录（响应仍使用原有的 `group:u8 count:u8` 记录布局）。

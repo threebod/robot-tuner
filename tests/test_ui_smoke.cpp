@@ -23,6 +23,7 @@
 #include "device/DeviceClient.h"
 #include "pages/ActionTestPage.h"
 #include "pages/ChassisPage.h"
+#include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/OverviewPage.h"
@@ -151,6 +152,7 @@ int main(int argc, char **argv) {
     auto *terminalNotice =
         window.findChild<QLabel *>("terminalBypassNotice");
     auto *visionPage = window.findChild<QWidget *>("视觉（预留）");
+    auto *fieldPositionPage = window.findChild<FieldPositionPage *>("场地定位");
     auto *visionPlaceholder =
         window.findChild<QLabel *>("visionPlaceholderLabel");
     auto *visionUsart1 = window.findChild<QLabel *>("visionUsart1Label");
@@ -172,7 +174,10 @@ int main(int argc, char **argv) {
     auto *protocol = window.findChild<ProtocolClient *>();
     auto *device = window.findChild<DeviceClient *>();
     auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
-    if (!require(nav && nav->count() == 7, "navigation pages changed") ||
+    if (!require(nav && nav->count() == 8, "navigation pages changed") ||
+        !require(fieldPositionPage && fieldPositionPage->isEnabled() &&
+                     window.findChild<FieldMapWidget *>("fieldMapWidget"),
+                 "field position navigation page is missing or disabled") ||
         !require(portCombo && baudCombo && refreshPortsButton && connectButton,
                  "connection controls are missing") ||
         !require(connectionStatusLabel && stop && !stop->isEnabled(),
