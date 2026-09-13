@@ -21,6 +21,7 @@
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
 #include "pages/VisionPage.h"
+#include "widgets/SerialDebugPanel.h"
 
 namespace {
 
@@ -154,6 +155,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(connectButton_, &QPushButton::clicked, this,
             &MainWindow::toggleConnection);
     connect(emergencyStopButton_, &QPushButton::clicked, this, [this] {
+        stopAutomaticSending();
         if (mecanumMode()) {
             mecanum_.emergencyStop();
         } else {
@@ -203,17 +205,36 @@ MainWindow::MainWindow(QWidget *parent)
                     terminalPage_->appendDecodedFrame(frame);
                 }
             });
-    const auto sendRaw = [this](QByteArray bytes) { sendRawBytes(bytes); };
+    const auto sendRaw = [this](QByteArray bytes) {
+        if (mecanumMode()) {
+            mecanum_.sendCommand(QString::fromUtf8(bytes));
+        } else {
+            sendRawBytes(bytes);
+        }
+    };
     connect(terminalPage_, &TerminalPage::rawSendRequested, this, sendRaw);
     connect(fieldPositionPage_, &FieldPositionPage::rawSendRequested, this,
             sendRaw);
-    connect(&mecanum_, &MecanumJogClient::bytesReady, this, sendRaw);
+    connect(&mecanum_, &MecanumJogClient::bytesReady, this,
+            [this](QByteArray bytes) {
+                sendRawBytes(bytes, bytes != QByteArray("hb\r\n"));
+            });
+    connect(deviceModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                terminalPage_->setTextStreamMode(mecanumMode());
+            });
     connect(&mecanum_, &MecanumJogClient::lineReceived, mecanumPage_,
             &MecanumJogPage::appendLine);
     connect(&mecanum_, &MecanumJogClient::commandStateChanged, mecanumPage_,
             &MecanumJogPage::setCommandState);
     connect(&mecanum_, &MecanumJogClient::commandFailed, mecanumPage_,
             &MecanumJogPage::showError);
+    connect(&mecanum_, &MecanumJogClient::commandFailed, terminalPage_,
+            &TerminalPage::showSendError);
+    connect(&mecanum_, &MecanumJogClient::stopRequested, this,
+            &MainWindow::stopAutomaticSending);
+    connect(&mecanum_, &MecanumJogClient::commandFailed, this,
+            &MainWindow::stopAutomaticSending);
     connect(mecanumPage_, &MecanumJogPage::commandRequested, &mecanum_,
             &MecanumJogClient::sendCommand);
     connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
@@ -373,6 +394,7 @@ void MainWindow::toggleConnection() {
 void MainWindow::handleSerialOpened() {
     serialConnected_ = true;
     heartbeatTimer_->stop();
+    terminalPage_->setTextStreamMode(mecanumMode());
     portCombo_->setEnabled(false);
     baudCombo_->setEnabled(false);
     deviceModeCombo_->setEnabled(false);
@@ -600,10 +622,18 @@ bool MainWindow::mecanumMode() const {
            deviceModeCombo_->currentData().toInt() == 1;
 }
 
-void MainWindow::sendRawBytes(QByteArray bytes) {
+void MainWindow::sendRawBytes(QByteArray bytes, bool showInLog) {
     if (serial_.write(QByteArrayView(bytes)) < 0) {
         return;
     }
-    terminalPage_->appendTx(bytes);
-    fieldPositionPage_->appendSerialTx(bytes);
+    if (showInLog) {
+        terminalPage_->appendTx(bytes);
+        fieldPositionPage_->appendSerialTx(bytes);
+    }
+}
+
+void MainWindow::stopAutomaticSending() {
+    for (auto *panel : findChildren<SerialDebugPanel *>()) {
+        panel->stopCycle();
+    }
 }

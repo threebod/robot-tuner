@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QAbstractSpinBox>
 #include <QByteArrayView>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -35,6 +36,7 @@
 #include "protocol/FrameParser.h"
 #include "serial/SerialController.h"
 #include "widgets/TelemetryPlot.h"
+#include "widgets/SerialDebugPanel.h"
 
 namespace {
 
@@ -153,6 +155,8 @@ int main(int argc, char **argv) {
         window.findChild<QPlainTextEdit *>("terminalLogTextEdit");
     auto *fieldSerialLog =
         window.findChild<QPlainTextEdit *>("fieldSerialLogTextEdit");
+    auto *fieldSerialMode =
+        window.findChild<QComboBox *>("fieldSerialDisplayModeCombo");
     auto *terminalInput =
         window.findChild<QLineEdit *>("terminalInputLineEdit");
     auto *terminalSend =
@@ -240,7 +244,8 @@ int main(int argc, char **argv) {
                       !actionChassisVx->isEnabled() && actionHorizontalTarget &&
                       !actionHorizontalTarget->isEnabled(),
                   "action controls must start disabled") ||
-        !require(terminalPage && terminalMode && terminalLog && terminalInput &&
+        !require(terminalPage && terminalMode && terminalLog && fieldSerialMode &&
+                      terminalInput &&
                       terminalSend && terminalClear && terminalPause &&
                       terminalNotice &&
                       terminalNotice->text().contains(
@@ -263,6 +268,8 @@ int main(int argc, char **argv) {
                      baudCombo->currentData().toInt() == 115200 &&
                      connectionStatusLabel->text() == QStringLiteral("未连接"),
                  "connection defaults changed") ||
+        !require(terminalMode && terminalMode->currentIndex() == 1,
+                 "terminal display does not default to ASCII") ||
         !require(pidProfile && pidProfile->count() == 5,
                  "PID profile selector must expose five profiles") ||
         !require(pidKp && pidKp->minimum() == 0.0 && pidKp->maximum() == 20.0,
@@ -284,6 +291,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    terminalMode->setCurrentIndex(0);
+    fieldSerialMode->setCurrentIndex(0);
     emit protocol->bytesReady(QByteArray::fromHex("12 34"));
     emit serialController->bytesReceived(QByteArray::fromHex("ca fe"));
     if (!require(fieldSerialLog &&
@@ -948,6 +957,11 @@ int main(int argc, char **argv) {
     auto *textProtocol = textWindow.findChild<ProtocolClient *>();
     auto *textClient = textWindow.findChild<MecanumJogClient *>();
     auto *textPage = textWindow.findChild<MecanumJogPage *>("临时调试");
+    auto *textTerminal = textWindow.findChild<TerminalPage *>("串口终端");
+    auto *textTerminalLog =
+        textWindow.findChild<QPlainTextEdit *>("terminalLogTextEdit");
+    auto *textTerminalClear =
+        textWindow.findChild<QPushButton *>("terminalClearButton");
     auto *textLegacyPage = textWindow.findChild<QWidget *>("底盘与 PID");
     auto *textEmergency =
         textWindow.findChild<QPushButton *>("emergencyStopButton");
@@ -974,6 +988,15 @@ int main(int argc, char **argv) {
                  "text mode page enablement is incorrect")) {
         return 1;
     }
+    textTerminalClear->click();
+    textTerminal->appendTx(QByteArray("hb\r\n"));
+    textTerminal->appendRx(QByteArray("route sta"));
+    textTerminal->appendRx(QByteArray("tus\r\nready\r\n"));
+    if (!require(textTerminalLog->toPlainText() ==
+                     QStringLiteral("route status\nready\n"),
+                 "text mode terminal is not a plain ASCII receive stream")) {
+        return 1;
+    }
     textWrites.clear();
     textEmergency->click();
     if (!require(textWrites.contains(QByteArray("!")),
@@ -982,6 +1005,69 @@ int main(int argc, char **argv) {
     }
     if (!require(!textMode->isEnabled(),
                  "device mode remained changeable while connected")) {
+        return 1;
+    }
+
+    auto *textTerminalInput = textWindow.findChild<QLineEdit *>("terminalInputLineEdit");
+    auto *textTerminalSend = textWindow.findChild<QPushButton *>("terminalSendButton");
+    auto *terminalHex = textWindow.findChild<QCheckBox *>("terminalHexSendCheckBox");
+    auto *terminalNewline = textWindow.findChild<QCheckBox *>("terminalNewlineCheckBox");
+    if (!require(!terminalHex->isChecked() && terminalNewline->isChecked(),
+                 "text mode terminal retained binary send defaults")) {
+        return 1;
+    }
+    for (const QString &stop : {QStringLiteral("!"), QStringLiteral("stop"),
+                               QStringLiteral("X"), QStringLiteral("disable")}) {
+        textWrites.clear();
+        textClient->sendArmedCommand(QStringLiteral("W"));
+        textTerminalInput->setText(stop);
+        textTerminalSend->click();
+        textClient->ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+        if (!require(textWrites.size() == 2 &&
+                         textWrites.back() == (stop == QStringLiteral("!")
+                             ? QByteArray("!") : stop.toUtf8() + QByteArray("\r\n")) &&
+                         !textWrites.contains(QByteArray("W\r\n")),
+                     "terminal stop bypassed the armed command cancellation")) {
+            return 1;
+        }
+    }
+    terminalNewline->setChecked(false);
+    textWrites.clear();
+    textTerminalInput->setText(QStringLiteral("servo 2 90"));
+    textTerminalSend->click();
+    if (!require(textWrites == QList<QByteArray>({QByteArray("servo 2 90\r\n")}),
+                 "text terminal allowed heartbeat to join an unterminated command")) {
+        return 1;
+    }
+    terminalHex->setChecked(true);
+    textWrites.clear();
+    textTerminalInput->setText(QStringLiteral("61 72 6d 0d 0a 57 0d 0a"));
+    textTerminalSend->click();
+    if (!require(textWrites.isEmpty(), "HEX bypass allowed a batch of text commands")) {
+        return 1;
+    }
+
+    MainWindow cycleWindow;
+    QMetaObject::invokeMethod(&cycleWindow, "handleSerialOpened", Qt::DirectConnection);
+    auto *cycleTerminal = cycleWindow.findChild<TerminalPage *>();
+    auto *cyclePanel = cycleTerminal->findChild<SerialDebugPanel *>();
+    cycleWindow.findChild<QCheckBox *>("terminalHexSendCheckBox")->setChecked(false);
+    cycleWindow.findChild<QCheckBox *>("terminalPresetEnabled0")->setChecked(true);
+    cycleWindow.findChild<QCheckBox *>("terminalPresetEnabled1")->setChecked(true);
+    cycleWindow.findChild<QLineEdit *>("terminalPresetInput0")->setText(QStringLiteral("first"));
+    cycleWindow.findChild<QLineEdit *>("terminalPresetInput1")->setText(QStringLiteral("second"));
+    cycleWindow.findChild<QSpinBox *>("terminalCyclePeriodSpinBox")->setValue(50);
+    int cycleWrites = 0;
+    QObject::connect(cycleTerminal, &TerminalPage::rawSendRequested,
+                     [&](QByteArray) { ++cycleWrites; });
+    cycleWindow.findChild<QPushButton *>("terminalCycleButton")->click();
+    if (!require(cyclePanel->cyclicSending(), "standard mode cycle did not start")) {
+        return 1;
+    }
+    cycleWindow.findChild<QPushButton *>("emergencyStopButton")->click();
+    waitFor(70);
+    if (!require(!cyclePanel->cyclicSending() && cycleWrites == 0,
+                 "global emergency stop left terminal cyclic sending active")) {
         return 1;
     }
     return 0;

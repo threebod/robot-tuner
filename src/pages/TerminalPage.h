@@ -14,6 +14,8 @@ public:
     explicit TerminalPage(QWidget *parent = nullptr);
 
     void setConnected(bool connected);
+    void setTextStreamMode(bool enabled);
+    void showSendError(const QString &error);
     void appendTx(const QByteArray &bytes);
     void appendRx(const QByteArray &bytes);
     void appendDecodedFrame(const protocol::Frame &frame);

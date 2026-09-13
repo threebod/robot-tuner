@@ -80,21 +80,29 @@ void MecanumJogClient::ingestBytes(QByteArrayView bytes) {
 
 bool MecanumJogClient::sendCommand(QString command) {
     command = command.trimmed();
+    if (command.contains('!')) {
+        return emergencyStop();
+    }
     if (!connected_) {
         emit commandFailed(QStringLiteral("串口未连接"));
         return false;
     }
     if (!validCommand(command)) {
-        emit commandFailed(QStringLiteral("命令不能为空且不能包含换行"));
+        emit commandFailed(QStringLiteral("请发送一条 1–23 字节的 ASCII 命令"));
         return false;
     }
-    if (!pendingCommand_.isEmpty() &&
-        (command == QStringLiteral("stop") || command == QStringLiteral("X") ||
-         command == QStringLiteral("x") ||
-         command == QStringLiteral("disable") ||
-         command == QStringLiteral("disable5"))) {
+    const bool stopping =
+        command == QStringLiteral("stop") || command == QStringLiteral("X") ||
+        command == QStringLiteral("x") ||
+        command == QStringLiteral("disable") ||
+        command == QStringLiteral("disable5");
+    if (stopping) {
         armTimer_.stop();
         pendingCommand_.clear();
+        emit stopRequested();
+    } else if (!pendingCommand_.isEmpty()) {
+        emit commandFailed(QStringLiteral("正在等待授权，请稍后发送；停止命令仍可使用"));
+        return false;
     }
     emit bytesReady(command.toUtf8() + QByteArray("\r\n"));
     emit commandStateChanged(QStringLiteral("已发送：%1").arg(command));
@@ -108,7 +116,7 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
         return false;
     }
     if (!validCommand(command)) {
-        emit commandFailed(QStringLiteral("命令不能为空且不能包含换行"));
+        emit commandFailed(QStringLiteral("请发送一条 1–23 字节的 ASCII 命令"));
         return false;
     }
     if (!pendingCommand_.isEmpty()) {
@@ -125,13 +133,12 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
 }
 
 bool MecanumJogClient::emergencyStop() {
+    armTimer_.stop();
+    pendingCommand_.clear();
+    emit stopRequested();
     if (!connected_) {
         emit commandFailed(QStringLiteral("串口未连接"));
         return false;
-    }
-    if (!pendingCommand_.isEmpty()) {
-        armTimer_.stop();
-        pendingCommand_.clear();
     }
     emit bytesReady(QByteArray("!"));
     emit commandStateChanged(QStringLiteral("已发送紧急停止"));
@@ -139,17 +146,41 @@ bool MecanumJogClient::emergencyStop() {
 }
 
 bool MecanumJogClient::validCommand(const QString &command) const {
-    return !command.isEmpty() && !command.contains('\r') &&
-           !command.contains('\n');
+    if (command.isEmpty() || command.size() > 23) {
+        return false;
+    }
+    for (const QChar character : command) {
+        if (character.unicode() < 0x20 || character.unicode() > 0x7e ||
+            character == QLatin1Char('!')) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void MecanumJogClient::handleLine(const QString &line) {
     emit lineReceived(line);
-    if (pendingCommand_.isEmpty()) {
-        return;
-    }
     if (line.startsWith(QStringLiteral("ERR"))) {
         failPending(line);
+        return;
+    }
+    if (line.startsWith(QStringLiteral("STOP")) ||
+        line.startsWith(QStringLiteral("EMERGENCY STOP"))) {
+        armTimer_.stop();
+        pendingCommand_.clear();
+        emit stopRequested();
+        emit commandStateChanged(QStringLiteral("设备已停止：%1").arg(line));
+        return;
+    }
+    if (pendingCommand_.isEmpty()) {
+        if (line.startsWith(QStringLiteral("OK")) ||
+            line.startsWith(QStringLiteral("RUN")) ||
+            line.startsWith(QStringLiteral("TX queued")) ||
+            line.startsWith(QStringLiteral("DONE")) ||
+            line.startsWith(QStringLiteral("ROUTE")) ||
+            line.startsWith(QStringLiteral("TURN"))) {
+            emit commandStateChanged(QStringLiteral("设备回复：%1").arg(line));
+        }
         return;
     }
     if (line != kArmedReply) {

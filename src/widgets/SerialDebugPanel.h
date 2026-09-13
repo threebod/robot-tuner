@@ -22,11 +22,14 @@ public:
     explicit SerialDebugPanel(const QString &objectPrefix,
                               QWidget *parent = nullptr);
     void setConnected(bool connected);
+    void setTextStreamMode(bool enabled);
     void appendTx(const QByteArray &bytes);
     void appendRx(const QByteArray &bytes);
     void appendDecodedFrame(const protocol::Frame &frame);
     bool saveLogToFile(const QString &path) const;
     bool cyclicSending() const;
+    void stopCycle();
+    void showSendError(const QString &error);
 
 signals:
     void rawSendRequested(QByteArray bytes);
@@ -34,9 +37,9 @@ signals:
 private:
     QByteArray encodedInput(const QString &text, bool *ok) const;
     bool sendText(const QString &text);
+    void appendTextStream(const QByteArray &bytes);
     void appendLine(const QString &direction, const QByteArray &bytes);
     QString formatBytes(const QByteArray &bytes) const;
-    void stopCycle();
     void updateCounts();
 
     QString objectPrefix_;
@@ -61,4 +64,6 @@ private:
     qint64 rxCount_{};
     bool connected_{};
     bool paused_{};
+    bool textStreamMode_{};
+    bool suppressLineFeed_{};
 };

@@ -16,6 +16,14 @@ void TerminalPage::setConnected(bool connected) {
     panel_->setConnected(connected);
 }
 
+void TerminalPage::setTextStreamMode(bool enabled) {
+    panel_->setTextStreamMode(enabled);
+}
+
+void TerminalPage::showSendError(const QString &error) {
+    panel_->showSendError(error);
+}
+
 void TerminalPage::appendTx(const QByteArray &bytes) {
     panel_->appendTx(bytes);
 }

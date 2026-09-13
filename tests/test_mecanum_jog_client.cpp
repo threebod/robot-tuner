@@ -76,8 +76,42 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    failures.clear();
+    client.ingestBytes(QByteArrayView(
+        "ERR: fresh IMU yaw required; check baud/wiring/status\r\n"));
+    if (!require(failures.size() == 1,
+                 "post-dispatch firmware error was ignored")) {
+        return 1;
+    }
+    client.sendCommand(QStringLiteral("servo 2 90"));
+    client.ingestBytes(QByteArrayView("ERR: test busy; use stop or ! first\r\n"));
+    if (!require(failures.size() == 2,
+                 "unarmed command error was ignored")) {
+        return 1;
+    }
+    QString latestState;
+    QObject::connect(&client, &MecanumJogClient::commandStateChanged,
+                     [&](QString state) { latestState = state; });
+    client.ingestBytes(QByteArrayView("STOPPED and disarmed\r\n"));
+    if (!require(latestState.contains(QStringLiteral("设备已停止")),
+                 "device stop did not update command state")) {
+        return 1;
+    }
+
     transmitted.clear();
+    if (!require(!client.sendCommand(QStringLiteral("arm\r\nW")) &&
+                     !client.sendCommand(QString(24, QLatin1Char('a'))) &&
+                     !client.sendCommand(QStringLiteral("中文")) &&
+                     transmitted.isEmpty(),
+                 "invalid or batched text commands reached the UART")) {
+        return 1;
+    }
     client.sendArmedCommand(QStringLiteral("W"));
+    if (!require(!client.sendCommand(QStringLiteral("arm")) &&
+                     transmitted.size() == 1,
+                 "terminal command interfered with pending authorization")) {
+        return 1;
+    }
     client.sendCommand(QStringLiteral("stop"));
     client.ingestBytes(
         QByteArrayView("ARMED for one enable or motion command\r\n"));
@@ -85,6 +119,19 @@ int main(int argc, char **argv) {
                      !transmitted.contains(QByteArray("W\r\n")),
                  "late ARMED reply restarted an action after stop")) {
         return 1;
+    }
+
+    for (const QString &stop : {QStringLiteral("!\r\n"), QStringLiteral("X"),
+                               QStringLiteral("disable"), QStringLiteral("disable5")}) {
+        transmitted.clear();
+        client.sendArmedCommand(QStringLiteral("W"));
+        client.sendCommand(stop);
+        client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+        if (!require(transmitted.size() == 2 &&
+                         !transmitted.contains(QByteArray("W\r\n")),
+                     "terminal stop did not cancel pending authorization")) {
+            return 1;
+        }
     }
 
     transmitted.clear();

@@ -47,7 +47,8 @@ private slots:
 private:
     void setDeviceControlsEnabled(bool enabled);
     bool mecanumMode() const;
-    void sendRawBytes(QByteArray bytes);
+    void sendRawBytes(QByteArray bytes, bool showInLog = true);
+    void stopAutomaticSending();
 
     ProtocolClient protocol_;
     DeviceClient device_;

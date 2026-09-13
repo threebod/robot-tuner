@@ -23,6 +23,7 @@ signals:
     void lineReceived(QString line);
     void commandStateChanged(QString state);
     void commandFailed(QString reason);
+    void stopRequested();
 
 private:
     bool validCommand(const QString &command) const;

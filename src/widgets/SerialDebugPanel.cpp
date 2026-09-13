@@ -15,6 +15,7 @@
 #include <QRegularExpression>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QTextCursor>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -28,6 +29,7 @@ SerialDebugPanel::SerialDebugPanel(const QString &objectPrefix, QWidget *parent)
     displayModeCombo_ = new QComboBox(this);
     displayModeCombo_->setObjectName(named(QStringLiteral("DisplayModeCombo")));
     displayModeCombo_->addItems({QStringLiteral("HEX"), QStringLiteral("ASCII")});
+    displayModeCombo_->setCurrentIndex(1);
     timestampCheckBox_ = new QCheckBox(QStringLiteral("时间戳"), this);
     timestampCheckBox_->setObjectName(named(QStringLiteral("TimestampCheckBox")));
     timestampCheckBox_->setChecked(true);
@@ -117,7 +119,7 @@ SerialDebugPanel::SerialDebugPanel(const QString &objectPrefix, QWidget *parent)
     sendTabs->addTab(presetTab, QStringLiteral("多条发送"));
     sendLayout->addWidget(sendTabs);
     auto *bypassNotice = new QLabel(
-        QStringLiteral("原始发送绕过请求跟踪，仅用于串口调试。"), sendGroup);
+        QStringLiteral("标准协议原始发送绕过请求跟踪；文本模式每次仅发送一条命令。"), sendGroup);
     bypassNotice->setObjectName(named(QStringLiteral("BypassNotice")));
     sendLayout->addWidget(bypassNotice);
     layout->addWidget(sendGroup);
@@ -136,6 +138,7 @@ SerialDebugPanel::SerialDebugPanel(const QString &objectPrefix, QWidget *parent)
             &QPushButton::click);
     connect(clearButton_, &QPushButton::clicked, this, [this] {
         logTextEdit_->clear();
+        suppressLineFeed_ = false;
         txCount_ = 0;
         rxCount_ = 0;
         updateCounts();
@@ -159,6 +162,9 @@ SerialDebugPanel::SerialDebugPanel(const QString &objectPrefix, QWidget *parent)
     connect(cyclePeriodSpinBox_, qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int intervalMs) { cycleTimer_->setInterval(intervalMs); });
     connect(cycleButton_, &QPushButton::clicked, this, [this] {
+        if (textStreamMode_) {
+            return;
+        }
         if (cycleTimer_->isActive()) {
             stopCycle();
             return;
@@ -188,6 +194,9 @@ SerialDebugPanel::SerialDebugPanel(const QString &objectPrefix, QWidget *parent)
     });
     connect(cycleTimer_, &QTimer::timeout, this, [this] {
         for (int index = 0; index < presetInputs_.size(); ++index) {
+            if (!cycleTimer_->isActive()) {
+                break;
+            }
             if (presetEnabled_[index]->isChecked()) {
                 sendText(presetInputs_[index]->text());
             }
@@ -203,7 +212,7 @@ void SerialDebugPanel::setConnected(bool connected) {
         stopCycle();
     }
     sendButton_->setEnabled(connected_);
-    cycleButton_->setEnabled(connected_);
+    cycleButton_->setEnabled(connected_ && !textStreamMode_);
     for (int index = 0; index < presetInputs_.size(); ++index) {
         presetSendButtons_[index]->setEnabled(connected_);
     }
@@ -213,15 +222,39 @@ void SerialDebugPanel::setConnected(bool connected) {
     }
 }
 
+void SerialDebugPanel::setTextStreamMode(bool enabled) {
+    if (textStreamMode_ != enabled) {
+        stopCycle();
+        hexSendCheckBox_->setChecked(!enabled);
+        newlineCheckBox_->setChecked(enabled);
+    }
+    textStreamMode_ = enabled;
+    suppressLineFeed_ = false;
+    cycleButton_->setEnabled(connected_ && !enabled);
+    cycleButton_->setToolTip(enabled
+        ? QStringLiteral("文本固件只支持单条命令接收，请使用各条目的发送按钮")
+        : QString());
+    if (enabled) {
+        displayModeCombo_->setCurrentIndex(1);
+    }
+}
+
 void SerialDebugPanel::appendTx(const QByteArray &bytes) {
     txCount_ += bytes.size();
     updateCounts();
+    if (textStreamMode_ && displayModeCombo_->currentIndex() == 1) {
+        return;
+    }
     appendLine(QStringLiteral("TX"), bytes);
 }
 
 void SerialDebugPanel::appendRx(const QByteArray &bytes) {
     rxCount_ += bytes.size();
     updateCounts();
+    if (textStreamMode_ && displayModeCombo_->currentIndex() == 1) {
+        appendTextStream(bytes);
+        return;
+    }
     appendLine(QStringLiteral("RX"), bytes);
 }
 
@@ -252,6 +285,10 @@ bool SerialDebugPanel::saveLogToFile(const QString &path) const {
 
 bool SerialDebugPanel::cyclicSending() const {
     return cycleTimer_->isActive();
+}
+
+void SerialDebugPanel::showSendError(const QString &error) {
+    statusLabel_->setText(QStringLiteral("错误：%1").arg(error));
 }
 
 QByteArray SerialDebugPanel::encodedInput(const QString &text, bool *ok) const {
@@ -286,6 +323,35 @@ bool SerialDebugPanel::sendText(const QString &text) {
     }
     emit rawSendRequested(bytes);
     return true;
+}
+
+void SerialDebugPanel::appendTextStream(const QByteArray &bytes) {
+    if (paused_ || bytes.isEmpty()) {
+        return;
+    }
+
+    QByteArray normalized;
+    normalized.reserve(bytes.size());
+    for (const char byte : bytes) {
+        if (suppressLineFeed_) {
+            suppressLineFeed_ = false;
+            if (byte == '\n') {
+                continue;
+            }
+        }
+        if (byte == '\r') {
+            normalized.append('\n');
+            suppressLineFeed_ = true;
+        } else {
+            normalized.append(byte);
+        }
+    }
+
+    QTextCursor cursor = logTextEdit_->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText(QString::fromUtf8(normalized));
+    logTextEdit_->setTextCursor(cursor);
+    logTextEdit_->ensureCursorVisible();
 }
 
 void SerialDebugPanel::appendLine(const QString &direction,

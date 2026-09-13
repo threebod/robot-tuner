@@ -61,6 +61,8 @@ int main(int argc, char **argv) {
         !require(period->minimum() == 50 && period->maximum() == 60000 &&
                      period->value() == 1000,
                  "cycle period range or default is incorrect") ||
+        !require(displayMode->currentIndex() == 1,
+                 "serial display does not default to ASCII") ||
         !require(!send->isEnabled() && !cycle->isEnabled(),
                  "serial sending was enabled while disconnected") ||
         !require(input->isEnabled() && preset0->isEnabled(),
@@ -84,6 +86,35 @@ int main(int argc, char **argv) {
                  "ASCII display or timestamp toggle is incorrect")) {
         return 1;
     }
+
+    clear->click();
+    panel.setTextStreamMode(true);
+    if (!require(!hexSend->isChecked() && newline->isChecked() &&
+                     !cycle->isEnabled(),
+                 "text mode send defaults or cycle restriction are incorrect")) {
+        return 1;
+    }
+    panel.appendTx(QByteArray("hb\r\n"));
+    panel.appendRx(QByteArray("Mecan"));
+    panel.appendRx(QByteArray("um\r"));
+    panel.appendRx(QByteArray("\nready\r\n"));
+    if (!require(log->toPlainText() == QStringLiteral("Mecanum\nready\n"),
+                 "ASCII text stream did not join fragments or render CRLF") ||
+        !require(!log->toPlainText().contains(QStringLiteral("TX")) &&
+                     !log->toPlainText().contains(QStringLiteral("RX")) &&
+                     !log->toPlainText().contains(QStringLiteral("\\r")) &&
+                     !log->toPlainText().contains(QStringLiteral("\\n")),
+                 "ASCII text stream contains protocol log decorations")) {
+        return 1;
+    }
+    displayMode->setCurrentIndex(0);
+    panel.appendRx(QByteArray("A"));
+    if (!require(log->toPlainText().contains(QStringLiteral("RX 41")),
+                 "manual HEX display no longer uses record formatting")) {
+        return 1;
+    }
+    displayMode->setCurrentIndex(1);
+    panel.setTextStreamMode(false);
     pause->click();
     panel.appendRx(QByteArray("hidden"));
     if (!require(!log->toPlainText().contains(QStringLiteral("hidden")),
@@ -145,6 +176,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    panel.setConnected(true);
+    cycle->click();
+    panel.setTextStreamMode(true);
+    const int beforeTextCycle = sent.size();
+    cycle->click();
+    waitMs(70);
+    if (!require(!panel.cyclicSending() && !cycle->isEnabled() &&
+                     sent.size() == beforeTextCycle,
+                 "switching to text mode did not cancel/reject cyclic sending")) {
+        return 1;
+    }
+    preset0->setText(QStringLiteral("status"));
+    preset0Send->click();
+    if (!require(sent.back() == QByteArray("status\r\n"),
+                 "text presets cannot be sent individually with CRLF")) {
+        return 1;
+    }
+    panel.setTextStreamMode(false);
+    hexSend->setChecked(false);
+    const int beforeStop = sent.size();
+    const auto stopDuringCycle = QObject::connect(
+        &panel, &SerialDebugPanel::rawSendRequested, &panel,
+        [&panel](QByteArray) { panel.stopCycle(); });
+    cycle->click();
+    waitMs(70);
+    QObject::disconnect(stopDuringCycle);
+    if (!require(!panel.cyclicSending() && sent.size() == beforeStop + 1,
+                 "remaining entries escaped a stop during the cycle callback")) {
+        return 1;
+    }
+    panel.setConnected(false);
+
     QTemporaryDir directory;
     const QString savePath = directory.filePath(QStringLiteral("serial.txt"));
     if (!require(panel.saveLogToFile(savePath), "serial log save failed")) {
@@ -152,7 +215,8 @@ int main(int argc, char **argv) {
     }
     QFile saved(savePath);
     if (!require(saved.open(QIODevice::ReadOnly) &&
-                     QString::fromUtf8(saved.readAll()).contains(QStringLiteral("ASCII")),
+                     QString::fromUtf8(saved.readAll()).contains(
+                         QStringLiteral("Mecanum")),
                  "saved serial log content is incorrect")) {
         return 1;
     }
