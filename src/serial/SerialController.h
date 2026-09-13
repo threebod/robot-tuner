@@ -21,6 +21,7 @@ public:
     bool open(QString portName, qint32 baudRate);
     void close();
     qint64 write(QByteArrayView bytes);
+    void setProtocolEnabled(bool enabled);
 
 signals:
     void opened();
@@ -42,4 +43,5 @@ private:
     bool connected_{};
     bool opening_{};
     bool openErrorReported_{};
+    bool protocolEnabled_{true};
 };

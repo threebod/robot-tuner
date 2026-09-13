@@ -21,11 +21,13 @@
 
 #include "app/MainWindow.h"
 #include "device/DeviceClient.h"
+#include "device/MecanumJogClient.h"
 #include "pages/ActionTestPage.h"
 #include "pages/ChassisPage.h"
 #include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
 #include "pages/VisionPage.h"
@@ -41,6 +43,12 @@ bool require(bool condition, const char *message) {
         std::cerr << message << '\n';
     }
     return condition;
+}
+
+void waitFor(int milliseconds) {
+    QEventLoop loop;
+    QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 void acceptNextConfirmation() {
@@ -105,6 +113,7 @@ int main(int argc, char **argv) {
     auto *nav = window.findChild<QListWidget *>("navigationList");
     auto *portCombo = window.findChild<QComboBox *>("portCombo");
     auto *baudCombo = window.findChild<QComboBox *>("baudCombo");
+    auto *deviceModeCombo = window.findChild<QComboBox *>("deviceModeCombo");
     auto *refreshPortsButton = window.findChild<QPushButton *>("refreshPortsButton");
     auto *connectButton = window.findChild<QPushButton *>("connectButton");
     auto *connectionStatusLabel =
@@ -156,6 +165,7 @@ int main(int argc, char **argv) {
         window.findChild<QLabel *>("terminalBypassNotice");
     auto *visionPage = window.findChild<QWidget *>("视觉（预留）");
     auto *fieldPositionPage = window.findChild<FieldPositionPage *>("场地定位");
+    auto *mecanumPage = window.findChild<MecanumJogPage *>("临时调试");
     auto *visionPlaceholder =
         window.findChild<QLabel *>("visionPlaceholderLabel");
     auto *visionUsart1 = window.findChild<QLabel *>("visionUsart1Label");
@@ -182,12 +192,17 @@ int main(int argc, char **argv) {
     auto *device = window.findChild<DeviceClient *>();
     auto *serialController = window.findChild<SerialController *>();
     auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
-    if (!require(nav && nav->count() == 8, "navigation pages changed") ||
+    if (!require(nav && nav->count() == 9, "navigation pages changed") ||
         !require(fieldPositionPage && fieldPositionPage->isEnabled() &&
                      window.findChild<FieldMapWidget *>("fieldMapWidget"),
                  "field position navigation page is missing or disabled") ||
-        !require(portCombo && baudCombo && refreshPortsButton && connectButton,
+        !require(portCombo && baudCombo && deviceModeCombo &&
+                     deviceModeCombo->count() == 2 &&
+                     deviceModeCombo->currentIndex() == 0 &&
+                     refreshPortsButton && connectButton,
                  "connection controls are missing") ||
+        !require(mecanumPage && !mecanumPage->isEnabled(),
+                 "temporary mecanum page must start disabled") ||
         !require(connectionStatusLabel && stop && !stop->isEnabled(),
                  "connection status controls are invalid") ||
         !require(clearStop && !clearStop->isEnabled(),
@@ -925,6 +940,48 @@ int main(int argc, char **argv) {
     rightButton->click();
     if (!require(directionVx == 80 && directionVy == 0 && directionW == 0,
                  "right direction vector is incorrect")) {
+        return 1;
+    }
+
+    MainWindow textWindow;
+    auto *textMode = textWindow.findChild<QComboBox *>("deviceModeCombo");
+    auto *textProtocol = textWindow.findChild<ProtocolClient *>();
+    auto *textClient = textWindow.findChild<MecanumJogClient *>();
+    auto *textPage = textWindow.findChild<MecanumJogPage *>("临时调试");
+    auto *textLegacyPage = textWindow.findChild<QWidget *>("底盘与 PID");
+    auto *textEmergency =
+        textWindow.findChild<QPushButton *>("emergencyStopButton");
+    auto *textClear =
+        textWindow.findChild<QPushButton *>("clearEmergencyStopButton");
+    QList<QByteArray> binaryWrites;
+    QList<QByteArray> textWrites;
+    QObject::connect(textProtocol, &ProtocolClient::bytesReady,
+                     [&](QByteArray bytes) { binaryWrites.push_back(bytes); });
+    QObject::connect(textClient, &MecanumJogClient::bytesReady,
+                     [&](QByteArray bytes) { textWrites.push_back(bytes); });
+    textMode->setCurrentIndex(1);
+    if (!require(QMetaObject::invokeMethod(&textWindow, "handleSerialOpened",
+                                           Qt::DirectConnection),
+                 "text serial-open handler could not be invoked")) {
+        return 1;
+    }
+    waitFor(300);
+    if (!require(binaryWrites.isEmpty() &&
+                     textWrites.contains(QByteArray("hb\r\n")),
+                 "text mode sent binary HELLO or failed to start heartbeat") ||
+        !require(textPage->isEnabled() && !textLegacyPage->isEnabled() &&
+                     !textClear->isEnabled(),
+                 "text mode page enablement is incorrect")) {
+        return 1;
+    }
+    textWrites.clear();
+    textEmergency->click();
+    if (!require(textWrites.contains(QByteArray("!")),
+                 "text mode emergency stop did not send a raw exclamation")) {
+        return 1;
+    }
+    if (!require(!textMode->isEnabled(),
+                 "device mode remained changeable while connected")) {
         return 1;
     }
     return 0;

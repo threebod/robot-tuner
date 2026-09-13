@@ -4,6 +4,7 @@
 #include <QTimer>
 
 #include "device/DeviceClient.h"
+#include "device/MecanumJogClient.h"
 #include "protocol/ProtocolClient.h"
 #include "serial/SerialController.h"
 
@@ -20,6 +21,7 @@ class ActionTestPage;
 class TerminalPage;
 class VisionPage;
 class FieldPositionPage;
+class MecanumJogPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -44,14 +46,18 @@ private slots:
 
 private:
     void setDeviceControlsEnabled(bool enabled);
+    bool mecanumMode() const;
+    void sendRawBytes(QByteArray bytes);
 
     ProtocolClient protocol_;
     DeviceClient device_;
+    MecanumJogClient mecanum_;
     SerialController serial_;
     QTimer *heartbeatTimer_{};
 
     QComboBox *portCombo_{};
     QComboBox *baudCombo_{};
+    QComboBox *deviceModeCombo_{};
     QPushButton *refreshPortsButton_{};
     QPushButton *connectButton_{};
     QLabel *connectionStatusLabel_{};
@@ -66,5 +72,6 @@ private:
     TerminalPage *terminalPage_{};
     VisionPage *visionPage_{};
     FieldPositionPage *fieldPositionPage_{};
+    MecanumJogPage *mecanumPage_{};
     bool serialConnected_{};
 };

@@ -17,6 +17,7 @@
 #include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
 #include "pages/VisionPage.h"
@@ -25,7 +26,7 @@ namespace {
 
 static const QStringList kPages = {
     "总览", "场地定位", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
-    "串口终端", "视觉（预留）"
+    "临时调试", "串口终端", "视觉（预留）"
 };
 
 constexpr quint8 kDefaultTelemetryMask = 0x07;
@@ -37,6 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       protocol_(this),
       device_(&protocol_, this),
+      mecanum_(this),
       serial_(&protocol_, this) {
     heartbeatTimer_ = new QTimer(this);
     heartbeatTimer_->setObjectName(QStringLiteral("heartbeatTimer"));
@@ -54,6 +56,10 @@ MainWindow::MainWindow(QWidget *parent)
     baudCombo_ = new QComboBox(centralWidget);
     baudCombo_->setObjectName("baudCombo");
     baudCombo_->addItem(QStringLiteral("115200"), 115200);
+    deviceModeCombo_ = new QComboBox(centralWidget);
+    deviceModeCombo_->setObjectName(QStringLiteral("deviceModeCombo"));
+    deviceModeCombo_->addItem(QStringLiteral("标准调试协议"), 0);
+    deviceModeCombo_->addItem(QStringLiteral("mecanum_jog 文本协议"), 1);
 
     refreshPortsButton_ = new QPushButton("刷新串口", centralWidget);
     refreshPortsButton_->setObjectName("refreshPortsButton");
@@ -70,6 +76,7 @@ MainWindow::MainWindow(QWidget *parent)
         QStringLiteral("clearEmergencyStopButton"));
     clearEmergencyStopButton_->setEnabled(false);
 
+    connectionBar->addWidget(deviceModeCombo_);
     connectionBar->addWidget(portCombo_);
     connectionBar->addWidget(baudCombo_);
     connectionBar->addWidget(refreshPortsButton_);
@@ -108,6 +115,9 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("动作测试")) {
             actionPage_ = new ActionTestPage(pageStack_);
             page = actionPage_;
+        } else if (pageName == QStringLiteral("临时调试")) {
+            mecanumPage_ = new MecanumJogPage(pageStack_);
+            page = mecanumPage_;
         } else if (pageName == QStringLiteral("串口终端")) {
             terminalPage_ = new TerminalPage(pageStack_);
             page = terminalPage_;
@@ -144,9 +154,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(connectButton_, &QPushButton::clicked, this,
             &MainWindow::toggleConnection);
     connect(emergencyStopButton_, &QPushButton::clicked, this, [this] {
-        // Emergency stop is intentionally immediate and never asks for a
-        // confirmation.  DeviceClient also locks actions before TX.
-        device_.emergencyStop();
+        if (mecanumMode()) {
+            mecanum_.emergencyStop();
+        } else {
+            // Emergency stop is intentionally immediate and never asks for a
+            // confirmation. DeviceClient also locks actions before TX.
+            device_.emergencyStop();
+        }
     });
     connect(clearEmergencyStopButton_, &QPushButton::clicked, this,
             &MainWindow::requestClearEmergencyStop);
@@ -173,6 +187,9 @@ MainWindow::MainWindow(QWidget *parent)
                 if (fieldPositionPage_ != nullptr) {
                     fieldPositionPage_->appendSerialRx(bytes);
                 }
+                if (mecanumMode()) {
+                    mecanum_.ingestBytes(QByteArrayView(bytes));
+                }
             });
     connect(&protocol_, &ProtocolClient::responseReceived, this,
             [this](protocol::Frame frame) {
@@ -186,16 +203,21 @@ MainWindow::MainWindow(QWidget *parent)
                     terminalPage_->appendDecodedFrame(frame);
                 }
             });
-    const auto sendRaw = [this](QByteArray bytes) {
-        if (serial_.write(QByteArrayView(bytes)) < 0) {
-            return;
-        }
-        terminalPage_->appendTx(bytes);
-        fieldPositionPage_->appendSerialTx(bytes);
-    };
+    const auto sendRaw = [this](QByteArray bytes) { sendRawBytes(bytes); };
     connect(terminalPage_, &TerminalPage::rawSendRequested, this, sendRaw);
     connect(fieldPositionPage_, &FieldPositionPage::rawSendRequested, this,
             sendRaw);
+    connect(&mecanum_, &MecanumJogClient::bytesReady, this, sendRaw);
+    connect(&mecanum_, &MecanumJogClient::lineReceived, mecanumPage_,
+            &MecanumJogPage::appendLine);
+    connect(&mecanum_, &MecanumJogClient::commandStateChanged, mecanumPage_,
+            &MecanumJogPage::setCommandState);
+    connect(&mecanum_, &MecanumJogClient::commandFailed, mecanumPage_,
+            &MecanumJogPage::showError);
+    connect(mecanumPage_, &MecanumJogPage::commandRequested, &mecanum_,
+            &MecanumJogClient::sendCommand);
+    connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
+            &MecanumJogClient::sendArmedCommand);
     connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
             [this](qint64 latencyMs) {
                 if (overviewPage_ != nullptr) {
@@ -344,6 +366,7 @@ void MainWindow::toggleConnection() {
         return;
     }
 
+    serial_.setProtocolEnabled(!mecanumMode());
     serial_.open(portCombo_->currentText(), baudCombo_->currentData().toInt());
 }
 
@@ -352,8 +375,24 @@ void MainWindow::handleSerialOpened() {
     heartbeatTimer_->stop();
     portCombo_->setEnabled(false);
     baudCombo_->setEnabled(false);
+    deviceModeCombo_->setEnabled(false);
     refreshPortsButton_->setEnabled(false);
     connectButton_->setText(QStringLiteral("断开"));
+    if (mecanumMode()) {
+        connectionStatusLabel_->setText(
+            QStringLiteral("mecanum_jog 文本串口已连接"));
+        setDeviceControlsEnabled(false);
+        fieldPositionPage_->setEnabled(false);
+        mecanumPage_->setEnabled(true);
+        mecanumPage_->setConnected(true);
+        terminalPage_->setEnabled(true);
+        terminalPage_->setConnected(true);
+        emergencyStopButton_->setEnabled(true);
+        clearEmergencyStopButton_->setEnabled(false);
+        mecanum_.setConnected(true);
+        return;
+    }
+
     connectionStatusLabel_->setText(QStringLiteral("串口已连接，等待设备握手"));
     if (overviewPage_ != nullptr) {
         overviewPage_->setLinkState(QStringLiteral("串口已连接，等待设备握手"));
@@ -374,9 +413,14 @@ void MainWindow::handleSerialClosed() {
     heartbeatTimer_->stop();
     portCombo_->setEnabled(true);
     baudCombo_->setEnabled(true);
+    deviceModeCombo_->setEnabled(true);
     refreshPortsButton_->setEnabled(true);
     connectButton_->setText(QStringLiteral("连接"));
     connectionStatusLabel_->setText(QStringLiteral("未连接"));
+    mecanum_.setConnected(false);
+    mecanumPage_->setConnected(false);
+    mecanumPage_->setEnabled(false);
+    fieldPositionPage_->setEnabled(true);
     if (overviewPage_ != nullptr) {
         overviewPage_->setLinkState(QStringLiteral("未连接"));
         overviewPage_->setLatency(-1);
@@ -460,10 +504,15 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
         terminalPage_->setEnabled(serialConnected_);
         terminalPage_->setConnected(serialConnected_);
     }
+    if (mecanumPage_ != nullptr) {
+        mecanumPage_->setConnected(false);
+        mecanumPage_->setEnabled(false);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
             if (pageStack_->widget(index) == fieldPositionPage_ ||
                 pageStack_->widget(index) == actionPage_ ||
+                pageStack_->widget(index) == mecanumPage_ ||
                 pageStack_->widget(index) == terminalPage_) {
                 continue;
             }
@@ -534,6 +583,9 @@ void MainWindow::handleEmergencyStateChanged(bool locked) {
 }
 
 void MainWindow::requestClearEmergencyStop() {
+    if (mecanumMode()) {
+        return;
+    }
     const QMessageBox::StandardButton answer = QMessageBox::question(
         this, QStringLiteral("确认解除急停"),
         QStringLiteral("确认设备已静止并解除急停锁定吗？"),
@@ -541,4 +593,17 @@ void MainWindow::requestClearEmergencyStop() {
     if (answer == QMessageBox::Yes) {
         device_.clearEmergencyStop();
     }
+}
+
+bool MainWindow::mecanumMode() const {
+    return deviceModeCombo_ != nullptr &&
+           deviceModeCombo_->currentData().toInt() == 1;
+}
+
+void MainWindow::sendRawBytes(QByteArray bytes) {
+    if (serial_.write(QByteArrayView(bytes)) < 0) {
+        return;
+    }
+    terminalPage_->appendTx(bytes);
+    fieldPositionPage_->appendSerialTx(bytes);
 }

@@ -19,6 +19,8 @@ add_executable(robot_tuner
     src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/MecanumJogPage.cpp
+    src/pages/MecanumJogPage.h
     src/pages/OverviewPage.cpp
     src/pages/OverviewPage.h
     src/pages/ImuPage.cpp
@@ -37,6 +39,8 @@ add_executable(robot_tuner
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
     src/device/DeviceClient.h
+    src/device/MecanumJogClient.cpp
+    src/device/MecanumJogClient.h
     src/device/ParameterCatalog.cpp
     src/device/ParameterCatalog.h
     src/device/TelemetryTypes.h
@@ -63,6 +67,8 @@ add_executable(test_ui_smoke
     src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/MecanumJogPage.cpp
+    src/pages/MecanumJogPage.h
     src/pages/OverviewPage.cpp
     src/pages/OverviewPage.h
     src/pages/ImuPage.cpp
@@ -81,6 +87,8 @@ add_executable(test_ui_smoke
     src/app/MainWindow.h
     src/device/DeviceClient.cpp
     src/device/DeviceClient.h
+    src/device/MecanumJogClient.cpp
+    src/device/MecanumJogClient.h
     src/device/ParameterCatalog.cpp
     src/device/ParameterCatalog.h
     src/device/TelemetryTypes.h
@@ -182,6 +190,22 @@ add_executable(test_device_client
 )
 target_include_directories(test_device_client PRIVATE src)
 target_link_libraries(test_device_client PRIVATE Qt6::Core)
+
+add_executable(test_mecanum_jog_client
+    tests/test_mecanum_jog_client.cpp
+    src/device/MecanumJogClient.cpp
+    src/device/MecanumJogClient.h
+)
+target_include_directories(test_mecanum_jog_client PRIVATE src)
+target_link_libraries(test_mecanum_jog_client PRIVATE Qt6::Core)
+
+add_executable(test_mecanum_jog_page
+    tests/test_mecanum_jog_page.cpp
+    src/pages/MecanumJogPage.cpp
+    src/pages/MecanumJogPage.h
+)
+target_include_directories(test_mecanum_jog_page PRIVATE src)
+target_link_libraries(test_mecanum_jog_page PRIVATE Qt6::Widgets)
 
 add_executable(test_end_to_end
     tests/test_end_to_end.cpp
@@ -324,6 +348,31 @@ set_target_properties(test_pid_profile_baseline PROPERTIES
     LINKER_LANGUAGE C
 )
 
+set(MECANUM_JOG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../test/mecanum_jog")
+add_executable(test_mecanum_straight
+    ${MECANUM_JOG_DIR}/tests/test_straight.c
+)
+add_executable(test_mecanum_route
+    ${MECANUM_JOG_DIR}/tests/test_route.c
+)
+add_executable(test_mecanum_can
+    ${MECANUM_JOG_DIR}/tests/test_can.c
+    ${MECANUM_JOG_DIR}/jog_can.c
+)
+target_include_directories(test_mecanum_can PRIVATE
+    ${MECANUM_JOG_DIR}/tests/stubs
+)
+foreach(target test_mecanum_straight test_mecanum_route test_mecanum_can)
+    set_target_properties(${target} PROPERTIES
+        AUTOMOC OFF
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        LINKER_LANGUAGE C
+    )
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
+endforeach()
+
 enable_testing()
 add_test(NAME test_ui_smoke COMMAND test_ui_smoke)
 set_tests_properties(test_ui_smoke PROPERTIES
@@ -354,6 +403,15 @@ add_test(NAME test_device_client COMMAND test_device_client)
 set_tests_properties(test_device_client PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
+add_test(NAME test_mecanum_jog_client COMMAND test_mecanum_jog_client)
+set_tests_properties(test_mecanum_jog_client PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_mecanum_jog_page COMMAND test_mecanum_jog_page)
+set_tests_properties(test_mecanum_jog_page PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
 add_test(NAME test_end_to_end COMMAND test_end_to_end)
 set_tests_properties(test_end_to_end PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
@@ -381,3 +439,6 @@ if(TASK12_ENABLE_HOST_STUB_COMPILE)
     add_test(NAME test_task12_host_compile COMMAND test_task12_host_compile)
 endif()
 add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)
+add_test(NAME test_mecanum_straight COMMAND test_mecanum_straight)
+add_test(NAME test_mecanum_route COMMAND test_mecanum_route)
+add_test(NAME test_mecanum_can COMMAND test_mecanum_can)

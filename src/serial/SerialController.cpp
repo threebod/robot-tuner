@@ -101,13 +101,20 @@ qint64 SerialController::write(QByteArrayView bytes) {
     return serialPort_.write(bytes.data(), bytes.size());
 }
 
+void SerialController::setProtocolEnabled(bool enabled) {
+    protocolEnabled_ = enabled;
+    if (!protocolEnabled_ && protocol_ != nullptr) {
+        protocol_->clearPending();
+    }
+}
+
 void SerialController::handleReadyRead() {
     const QByteArray bytes = serialPort_.readAll();
     if (bytes.isEmpty()) {
         return;
     }
     emit bytesReceived(bytes);
-    if (protocol_ != nullptr) {
+    if (protocolEnabled_ && protocol_ != nullptr) {
         protocol_->ingestBytes(QByteArrayView(bytes));
     }
 }
@@ -143,7 +150,9 @@ void SerialController::handleSerialError(
 }
 
 void SerialController::handleProtocolBytes(QByteArray bytes) {
-    write(QByteArrayView(bytes));
+    if (protocolEnabled_) {
+        write(QByteArrayView(bytes));
+    }
 }
 
 void SerialController::reportError(const QString &message) {

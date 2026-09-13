@@ -51,5 +51,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    errorCount = 0;
+    serial.setProtocolEnabled(false);
+    protocol.sendRequest(protocol::Command::GetStatus, {});
+    if (!require(errorCount == 0,
+                 "disabled binary protocol still reached the serial port")) {
+        return 1;
+    }
+    serial.close();
+
     return 0;
 }
