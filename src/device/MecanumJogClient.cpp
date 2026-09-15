@@ -1,5 +1,7 @@
 #include "device/MecanumJogClient.h"
 
+#include <QRegularExpression>
+
 #include <utility>
 
 namespace {
@@ -36,6 +38,7 @@ void MecanumJogClient::setConnected(bool connected) {
     }
 
     heartbeatTimer_.stop();
+    invalidateNavigation();
     if (!pendingCommand_.isEmpty()) {
         failPending(QStringLiteral("连接已断开，授权命令已取消"));
     } else {
@@ -99,6 +102,7 @@ bool MecanumJogClient::sendCommand(QString command) {
     if (stopping) {
         armTimer_.stop();
         pendingCommand_.clear();
+        invalidateNavigation();
         emit stopRequested();
     } else if (!pendingCommand_.isEmpty()) {
         emit commandFailed(QStringLiteral("正在等待授权，请稍后发送；停止命令仍可使用"));
@@ -135,6 +139,7 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
 bool MecanumJogClient::emergencyStop() {
     armTimer_.stop();
     pendingCommand_.clear();
+    invalidateNavigation();
     emit stopRequested();
     if (!connected_) {
         emit commandFailed(QStringLiteral("串口未连接"));
@@ -143,6 +148,31 @@ bool MecanumJogClient::emergencyStop() {
     emit bytesReady(QByteArray("!"));
     emit commandStateChanged(QStringLiteral("已发送紧急停止"));
     return true;
+}
+
+bool MecanumJogClient::initializeNavigation(int startZone) {
+    if (startZone != 1 && startZone != 2) {
+        const QString error = QStringLiteral("启停区必须为 1 或 2");
+        emit navigationError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    return sendCommand(QStringLiteral("nav init %1").arg(startZone));
+}
+
+bool MecanumJogClient::navigateTo(qint32 xMm, qint32 yMm) {
+    if (xMm < 0 || xMm > 2400 || yMm < 0 || yMm > 2400) {
+        const QString error = QStringLiteral("目标坐标超出地图范围");
+        emit navigationError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    return sendArmedCommand(
+        QStringLiteral("nav goto %1 %2").arg(xMm).arg(yMm));
+}
+
+bool MecanumJogClient::navigationInitialized() const {
+    return navigationInitialized_;
 }
 
 bool MecanumJogClient::validCommand(const QString &command) const {
@@ -159,8 +189,52 @@ bool MecanumJogClient::validCommand(const QString &command) const {
 }
 
 void MecanumJogClient::handleLine(const QString &line) {
+    static const QRegularExpression initExpression(
+        QStringLiteral("^NAV INIT x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
+    static const QRegularExpression positionExpression(QStringLiteral(
+        "^NAV POS x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+) "
+        "state=(IDLE|RUN|TURN) target_x=\\d+ target_y=\\d+$"));
+    static const QRegularExpression doneExpression(
+        QStringLiteral("^NAV DONE x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
+
     emit lineReceived(line);
+    QRegularExpressionMatch match = initExpression.match(line);
+    if (match.hasMatch()) {
+        navigationInitialized_ = true;
+        emit navigationValidityChanged(true);
+        emit navigationEstimateReceived(
+            match.captured(1).toInt(), match.captured(2).toInt(),
+            match.captured(3).toDouble() / 100.0, QStringLiteral("IDLE"));
+        return;
+    }
+    match = positionExpression.match(line);
+    if (match.hasMatch()) {
+        emit navigationEstimateReceived(
+            match.captured(1).toInt(), match.captured(2).toInt(),
+            match.captured(3).toDouble() / 100.0, match.captured(4));
+        return;
+    }
+    match = doneExpression.match(line);
+    if (match.hasMatch()) {
+        emit navigationEstimateReceived(
+            match.captured(1).toInt(), match.captured(2).toInt(),
+            match.captured(3).toDouble() / 100.0, QStringLiteral("IDLE"));
+        emit navigationCompleted(match.captured(1).toInt(),
+                                 match.captured(2).toInt());
+        return;
+    }
+    if (line.startsWith(QStringLiteral("NAV INVALID"))) {
+        invalidateNavigation();
+        return;
+    }
     if (line.startsWith(QStringLiteral("ERR"))) {
+        if (line.startsWith(QStringLiteral("ERR NAV:"))) {
+            emit navigationError(line);
+        }
+        if (line.startsWith(QStringLiteral("ERR NAV:")) &&
+            line.contains(QStringLiteral("position invalid"))) {
+            invalidateNavigation();
+        }
         failPending(line);
         return;
     }
@@ -194,9 +268,22 @@ void MecanumJogClient::handleLine(const QString &line) {
     emit commandStateChanged(QStringLiteral("已授权并发送：%1").arg(command));
 }
 
+void MecanumJogClient::invalidateNavigation() {
+    if (!navigationInitialized_) {
+        return;
+    }
+    navigationInitialized_ = false;
+    emit navigationValidityChanged(false);
+}
+
 void MecanumJogClient::failPending(const QString &reason) {
+    const bool navigationPending =
+        pendingCommand_.startsWith(QStringLiteral("nav goto "));
     armTimer_.stop();
     pendingCommand_.clear();
+    if (navigationPending) {
+        emit navigationError(reason);
+    }
     emit commandFailed(reason);
     emit commandStateChanged(QStringLiteral("命令失败：%1").arg(reason));
 }

@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QGroupBox>
 #include <QLabel>
 #include <QListWidget>
 #include <QLineEdit>
@@ -202,9 +203,9 @@ int main(int argc, char **argv) {
                  "field position navigation page is missing or disabled") ||
         !require(portCombo && baudCombo && deviceModeCombo &&
                      deviceModeCombo->count() == 2 &&
-                     deviceModeCombo->currentIndex() == 0 &&
+                     deviceModeCombo->currentData().toInt() == 1 &&
                      refreshPortsButton && connectButton,
-                 "connection controls are missing") ||
+                 "connection controls are missing or text mode is not the default") ||
         !require(mecanumPage && !mecanumPage->isEnabled(),
                  "temporary mecanum page must start disabled") ||
         !require(connectionStatusLabel && stop && !stop->isEnabled(),
@@ -347,6 +348,7 @@ int main(int argc, char **argv) {
     }
     terminalPause->click();
 
+    deviceModeCombo->setCurrentIndex(0);
     QByteArray helloRequestBytes;
     QVector<QByteArray> telemetryRequests;
     bool heartbeatResponsesEnabled = false;
@@ -957,6 +959,13 @@ int main(int argc, char **argv) {
     auto *textProtocol = textWindow.findChild<ProtocolClient *>();
     auto *textClient = textWindow.findChild<MecanumJogClient *>();
     auto *textPage = textWindow.findChild<MecanumJogPage *>("临时调试");
+    auto *textField = textWindow.findChild<FieldPositionPage *>("场地定位");
+    auto *textNavControls =
+        textWindow.findChild<QGroupBox *>("navigationControlGroup");
+    auto *textNavInit1 =
+        textWindow.findChild<QPushButton *>("navigationInit1Button");
+    auto *textNavMove =
+        textWindow.findChild<QPushButton *>("navigationMoveButton");
     auto *textTerminal = textWindow.findChild<TerminalPage *>("串口终端");
     auto *textTerminalLog =
         textWindow.findChild<QPlainTextEdit *>("terminalLogTextEdit");
@@ -983,9 +992,25 @@ int main(int argc, char **argv) {
     if (!require(binaryWrites.isEmpty() &&
                      textWrites.contains(QByteArray("hb\r\n")),
                  "text mode sent binary HELLO or failed to start heartbeat") ||
-        !require(textPage->isEnabled() && !textLegacyPage->isEnabled() &&
+        !require(textPage->isEnabled() && textField->isEnabled() &&
+                     !textNavControls->isHidden() && !textLegacyPage->isEnabled() &&
                      !textClear->isEnabled(),
                  "text mode page enablement is incorrect")) {
+        return 1;
+    }
+    textWrites.clear();
+    textNavInit1->click();
+    textClient->ingestBytes(QByteArrayView(
+        "NAV INIT x=2250 y=2250 yaw_cdeg=9000\r\n"));
+    textField->selectFieldPoint({1160, 2050});
+    textNavMove->click();
+    textClient->ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(textWrites ==
+                     QList<QByteArray>({QByteArray("nav init 1\r\n"),
+                                        QByteArray("arm\r\n"),
+                                        QByteArray("nav goto 1200 2080\r\n")}),
+                 "map navigation UI is not wired to the text client")) {
         return 1;
     }
     textTerminalClear->click();
@@ -1048,6 +1073,7 @@ int main(int argc, char **argv) {
     }
 
     MainWindow cycleWindow;
+    cycleWindow.findChild<QComboBox *>("deviceModeCombo")->setCurrentIndex(0);
     QMetaObject::invokeMethod(&cycleWindow, "handleSerialOpened", Qt::DirectConnection);
     auto *cycleTerminal = cycleWindow.findChild<TerminalPage *>();
     auto *cyclePanel = cycleTerminal->findChild<SerialDebugPanel *>();

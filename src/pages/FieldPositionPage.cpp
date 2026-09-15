@@ -16,12 +16,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "widgets/SerialDebugPanel.h"
 
 namespace {
 
 constexpr double kFieldSizeMm = 2400.0;
+const QPointF kNavigationPoints[] = {
+    {2250, 2250}, {2100, 2250}, {2100, 2080}, {2100, 1200}, {2250, 150},
+    {2100, 150},  {1200, 2080}, {1200, 1200}, {1200, 400},  {400, 1200}};
 
 void drawFieldLabel(QPainter *painter, const QRectF &fieldRect,
                     QPointF fieldPoint, const QString &text) {
@@ -56,8 +60,18 @@ QPointF FieldMapWidget::displayedFieldPosition() const {
             std::clamp<double>(pose_.yMm, 0.0, kFieldSizeMm)};
 }
 
+QPointF FieldMapWidget::targetFieldPosition() const {
+    return targetPoint_;
+}
+
 void FieldMapWidget::setPoseSample(PoseSample sample) {
     pose_ = sample;
+    update();
+}
+
+void FieldMapWidget::setTargetPoint(QPointF point, bool visible) {
+    targetPoint_ = point;
+    targetVisible_ = visible;
     update();
 }
 
@@ -146,6 +160,13 @@ void FieldMapWidget::paintEvent(QPaintEvent *) {
     painter.drawPolygon(robot);
     painter.setBrush(Qt::NoBrush);
     painter.drawEllipse(center, 13, 13);
+    if (targetVisible_) {
+        const QPointF target = fieldToScreen(targetPoint_, area);
+        painter.setPen(QPen(QColor(37, 99, 235), 3));
+        painter.drawEllipse(target, 10, 10);
+        painter.drawLine(target + QPointF(-15, 0), target + QPointF(15, 0));
+        painter.drawLine(target + QPointF(0, -15), target + QPointF(0, 15));
+    }
 }
 
 FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
@@ -158,38 +179,42 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     topLayout->addWidget(map_, 1);
 
     auto *panel = new QVBoxLayout;
-    auto *title = new QLabel(QStringLiteral("场地位置同步"), topWidget);
+    auto *title = new QLabel(QStringLiteral("场地位置与导航"), topWidget);
     QFont titleFont = title->font();
     titleFont.setPointSize(titleFont.pointSize() + 3);
     titleFont.setBold(true);
     title->setFont(titleFont);
     panel->addWidget(title);
-    auto *notice = new QLabel(
+    noticeLabel_ = new QLabel(
         QStringLiteral("调试显示用途；现场布置可能偏离名义尺寸，不用于导航控制。"),
         topWidget);
-    notice->setWordWrap(true);
-    panel->addWidget(notice);
+    noticeLabel_->setWordWrap(true);
+    panel->addWidget(noticeLabel_);
 
-    simulationCheckBox_ = new QCheckBox(QStringLiteral("本地模拟模式"), topWidget);
+    poseControlGroup_ = new QGroupBox(QStringLiteral("位姿同步"), topWidget);
+    poseControlGroup_->setObjectName(QStringLiteral("poseControlGroup"));
+    auto *poseLayout = new QVBoxLayout(poseControlGroup_);
+    simulationCheckBox_ = new QCheckBox(QStringLiteral("本地模拟模式"),
+                                        poseControlGroup_);
     simulationCheckBox_->setObjectName(QStringLiteral("localSimulationCheckBox"));
     simulationCheckBox_->setChecked(true);
-    panel->addWidget(simulationCheckBox_);
+    poseLayout->addWidget(simulationCheckBox_);
 
     auto *presetRow = new QHBoxLayout;
-    auto *preset1 = new QPushButton(QStringLiteral("启停区 1"), topWidget);
+    auto *preset1 = new QPushButton(QStringLiteral("启停区 1"), poseControlGroup_);
     preset1->setObjectName(QStringLiteral("startZone1Button"));
-    auto *preset2 = new QPushButton(QStringLiteral("启停区 2"), topWidget);
+    auto *preset2 = new QPushButton(QStringLiteral("启停区 2"), poseControlGroup_);
     preset2->setObjectName(QStringLiteral("startZone2Button"));
     presetRow->addWidget(preset1);
     presetRow->addWidget(preset2);
-    panel->addLayout(presetRow);
+    poseLayout->addLayout(presetRow);
 
     auto *form = new QFormLayout;
-    xSpinBox_ = new QDoubleSpinBox(topWidget);
+    xSpinBox_ = new QDoubleSpinBox(poseControlGroup_);
     xSpinBox_->setObjectName(QStringLiteral("poseXSpinBox"));
-    ySpinBox_ = new QDoubleSpinBox(topWidget);
+    ySpinBox_ = new QDoubleSpinBox(poseControlGroup_);
     ySpinBox_->setObjectName(QStringLiteral("poseYSpinBox"));
-    yawSpinBox_ = new QDoubleSpinBox(topWidget);
+    yawSpinBox_ = new QDoubleSpinBox(poseControlGroup_);
     yawSpinBox_->setObjectName(QStringLiteral("poseYawSpinBox"));
     for (QDoubleSpinBox *coordinate : {xSpinBox_, ySpinBox_}) {
         coordinate->setRange(-2147483648.0, 2147483647.0);
@@ -202,11 +227,48 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     form->addRow(QStringLiteral("X（向右）"), xSpinBox_);
     form->addRow(QStringLiteral("Y（向上）"), ySpinBox_);
     form->addRow(QStringLiteral("航向（逆时针为正）"), yawSpinBox_);
-    panel->addLayout(form);
+    poseLayout->addLayout(form);
 
-    auto *apply = new QPushButton(QStringLiteral("应用位姿"), topWidget);
+    auto *apply = new QPushButton(QStringLiteral("应用位姿"), poseControlGroup_);
     apply->setObjectName(QStringLiteral("poseApplyButton"));
-    panel->addWidget(apply);
+    poseLayout->addWidget(apply);
+    panel->addWidget(poseControlGroup_);
+
+    navigationControlGroup_ =
+        new QGroupBox(QStringLiteral("安全航点移动"), topWidget);
+    navigationControlGroup_->setObjectName(
+        QStringLiteral("navigationControlGroup"));
+    auto *navigationLayout = new QVBoxLayout(navigationControlGroup_);
+    auto *initializeRow = new QHBoxLayout;
+    auto *initialize1 =
+        new QPushButton(QStringLiteral("从启停区 1 初始化"),
+                        navigationControlGroup_);
+    initialize1->setObjectName(QStringLiteral("navigationInit1Button"));
+    auto *initialize2 =
+        new QPushButton(QStringLiteral("从启停区 2 初始化"),
+                        navigationControlGroup_);
+    initialize2->setObjectName(QStringLiteral("navigationInit2Button"));
+    initializeRow->addWidget(initialize1);
+    initializeRow->addWidget(initialize2);
+    navigationLayout->addLayout(initializeRow);
+    navigationTargetLabel_ = new QLabel(QStringLiteral("目标：尚未选择"),
+                                        navigationControlGroup_);
+    navigationTargetLabel_->setObjectName(
+        QStringLiteral("navigationTargetLabel"));
+    navigationStateLabel_ = new QLabel(QStringLiteral("状态：请先连接文本固件"),
+                                       navigationControlGroup_);
+    navigationStateLabel_->setObjectName(
+        QStringLiteral("navigationStateLabel"));
+    navigationStateLabel_->setWordWrap(true);
+    navigationMoveButton_ = new QPushButton(QStringLiteral("移动到目标"),
+                                            navigationControlGroup_);
+    navigationMoveButton_->setObjectName(
+        QStringLiteral("navigationMoveButton"));
+    navigationLayout->addWidget(navigationTargetLabel_);
+    navigationLayout->addWidget(navigationStateLabel_);
+    navigationLayout->addWidget(navigationMoveButton_);
+    navigationControlGroup_->hide();
+    panel->addWidget(navigationControlGroup_);
 
     valueLabel_ = new QLabel(QStringLiteral("x=0.0 mm  y=0.0 mm  yaw=0.00°"), topWidget);
     valueLabel_->setObjectName(QStringLiteral("poseValueLabel"));
@@ -269,8 +331,27 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
             &FieldPositionPage::applyInputPose);
     connect(map_, &FieldMapWidget::fieldPointSelected, this,
             &FieldPositionPage::selectFieldPoint);
+    connect(initialize1, &QPushButton::clicked, this, [this] {
+        navigationStateLabel_->setText(QStringLiteral("状态：等待启停区 1 初始化确认"));
+        emit navigationInitRequested(1);
+    });
+    connect(initialize2, &QPushButton::clicked, this, [this] {
+        navigationStateLabel_->setText(QStringLiteral("状态：等待启停区 2 初始化确认"));
+        emit navigationInitRequested(2);
+    });
+    connect(navigationMoveButton_, &QPushButton::clicked, this, [this] {
+        if (!navigationTargetValid_) {
+            return;
+        }
+        navigationRunning_ = true;
+        refreshNavigationControls();
+        emit navigationTargetRequested(
+            static_cast<qint32>(navigationTarget_.x()),
+            static_cast<qint32>(navigationTarget_.y()));
+    });
     connect(serialPanel_, &SerialDebugPanel::rawSendRequested, this,
             &FieldPositionPage::rawSendRequested);
+    refreshNavigationControls();
 }
 
 void FieldPositionPage::setPoseSample(PoseSample sample,
@@ -349,7 +430,102 @@ void FieldPositionPage::appendSerialRx(const QByteArray &bytes) {
     serialPanel_->appendRx(bytes);
 }
 
+void FieldPositionPage::setNavigationMode(bool enabled) {
+    navigationMode_ = enabled;
+    poseControlGroup_->setVisible(!enabled);
+    navigationControlGroup_->setVisible(enabled);
+    map_->setTargetPoint({}, false);
+    navigationTargetValid_ = false;
+    navigationRunning_ = false;
+    noticeLabel_->setText(
+        enabled
+            ? QStringLiteral("仅沿预定义安全航点移动；位置来自命令积分估计，不是真实定位。")
+            : QStringLiteral("调试显示用途；现场布置可能偏离名义尺寸，不用于导航控制。"));
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setNavigationConnected(bool connected) {
+    navigationConnected_ = connected;
+    if (!connected) {
+        setNavigationInitialized(false);
+    }
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setNavigationInitialized(bool initialized) {
+    navigationInitialized_ = initialized;
+    navigationRunning_ = false;
+    navigationTargetValid_ = false;
+    map_->setTargetPoint({}, false);
+    navigationTargetLabel_->setText(QStringLiteral("目标：尚未选择"));
+    navigationStateLabel_->setText(
+        initialized ? QStringLiteral("状态：已初始化，请点击地图选择安全航点")
+                    : QStringLiteral("状态：位置无效，请回到启停区后重新初始化"));
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setNavigationEstimate(qint32 xMm, qint32 yMm,
+                                               double yawDegrees,
+                                               const QString &state) {
+    PoseSample sample;
+    sample.timestampMs = static_cast<quint32>(
+        QDateTime::currentMSecsSinceEpoch() & 0xffffffff);
+    sample.xMm = xMm;
+    sample.yMm = yMm;
+    sample.yawDegrees = yawDegrees;
+    navigationRunning_ = state == QStringLiteral("RUN") ||
+                         state == QStringLiteral("TURN");
+    setPoseSample(sample, QStringLiteral("地图导航估计（非真实定位）"));
+    if (state == QStringLiteral("TURN")) {
+        navigationStateLabel_->setText(QStringLiteral("状态：转向中（估计位置）"));
+    } else if (state == QStringLiteral("RUN")) {
+        navigationStateLabel_->setText(QStringLiteral("状态：移动中（估计位置）"));
+    } else {
+        navigationStateLabel_->setText(QStringLiteral("状态：已到点/空闲（估计位置）"));
+    }
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setNavigationError(const QString &message) {
+    navigationRunning_ = false;
+    navigationStateLabel_->setText(QStringLiteral("状态：错误：%1").arg(message));
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::refreshNavigationControls() {
+    navigationControlGroup_->setEnabled(navigationConnected_);
+    navigationMoveButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && navigationInitialized_ &&
+        navigationTargetValid_ && !navigationRunning_);
+}
+
+QPointF FieldPositionPage::nearestNavigationPoint(QPointF fieldPoint) const {
+    QPointF nearest = kNavigationPoints[0];
+    qreal bestDistance = std::numeric_limits<qreal>::max();
+    for (const QPointF &candidate : kNavigationPoints) {
+        const qreal dx = candidate.x() - fieldPoint.x();
+        const qreal dy = candidate.y() - fieldPoint.y();
+        const qreal distance = dx * dx + dy * dy;
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearest = candidate;
+        }
+    }
+    return nearest;
+}
+
 void FieldPositionPage::selectFieldPoint(QPointF fieldPoint) {
+    if (navigationMode_) {
+        navigationTarget_ = nearestNavigationPoint(fieldPoint);
+        navigationTargetValid_ = true;
+        navigationTargetLabel_->setText(
+            QStringLiteral("目标：x=%1 mm，y=%2 mm（已吸附安全航点）")
+                .arg(navigationTarget_.x(), 0, 'f', 0)
+                .arg(navigationTarget_.y(), 0, 'f', 0));
+        map_->setTargetPoint(navigationTarget_, true);
+        refreshNavigationControls();
+        return;
+    }
     xSpinBox_->setValue(fieldPoint.x());
     ySpinBox_->setValue(fieldPoint.y());
     if (simulationCheckBox_->isChecked()) {

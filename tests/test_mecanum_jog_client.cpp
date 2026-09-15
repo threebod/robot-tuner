@@ -1,5 +1,6 @@
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QPointF>
 #include <QTimer>
 
 #include <iostream>
@@ -30,14 +31,70 @@ int main(int argc, char **argv) {
     QList<QByteArray> transmitted;
     QStringList lines;
     QStringList failures;
+    QList<QString> navigationStates;
+    QList<QPointF> navigationPositions;
+    QList<bool> navigationValidity;
+    QList<QPointF> navigationCompletions;
     QObject::connect(&client, &MecanumJogClient::bytesReady,
                      [&](QByteArray bytes) { transmitted.push_back(bytes); });
     QObject::connect(&client, &MecanumJogClient::lineReceived,
                      [&](QString line) { lines.push_back(line); });
     QObject::connect(&client, &MecanumJogClient::commandFailed,
                      [&](QString reason) { failures.push_back(reason); });
+    QObject::connect(
+        &client, &MecanumJogClient::navigationEstimateReceived,
+        [&](qint32 xMm, qint32 yMm, double yawDegrees, QString state) {
+            navigationPositions.push_back(QPointF(xMm, yMm));
+            navigationStates.push_back(
+                QStringLiteral("%1:%2").arg(state).arg(yawDegrees));
+        });
+    QObject::connect(&client, &MecanumJogClient::navigationValidityChanged,
+                     [&](bool valid) { navigationValidity.push_back(valid); });
+    QObject::connect(&client, &MecanumJogClient::navigationCompleted,
+                     [&](qint32 xMm, qint32 yMm) {
+                         navigationCompletions.push_back(QPointF(xMm, yMm));
+                     });
 
     client.setConnected(true);
+    transmitted.clear();
+    if (!require(client.initializeNavigation(1) &&
+                     transmitted == QList<QByteArray>({QByteArray("nav init 1\r\n")}),
+                 "navigation initialization command is incorrect")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "NAV INIT x=2250 y=2250 yaw_cdeg=9000\r\n"
+        "NAV POS x=2100 y=2200 yaw_cdeg=8950 state=RUN target_x=1200 target_y=2080\r\n"
+        "NAV DONE x=1200 y=2080 yaw_cdeg=9000\r\n"));
+    if (!require(navigationValidity == QList<bool>({true}) &&
+                     navigationPositions ==
+                         QList<QPointF>({QPointF(2250, 2250), QPointF(2100, 2200),
+                                        QPointF(1200, 2080)}) &&
+                     navigationStates.at(0).startsWith(QStringLiteral("IDLE:90")) &&
+                     navigationStates.at(1).startsWith(QStringLiteral("RUN:89.5")) &&
+                     navigationCompletions == QList<QPointF>({QPointF(1200, 2080)}),
+                 "structured navigation replies were not decoded")) {
+        return 1;
+    }
+    transmitted.clear();
+    if (!require(client.navigateTo(400, 1200) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "navigation target did not start the arm handshake")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted == QList<QByteArray>({QByteArray("arm\r\n"),
+                                                   QByteArray("nav goto 400 1200\r\n")}),
+                 "navigation target command is incorrect")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView("NAV INVALID reason=stopped\r\n"));
+    if (!require(navigationValidity.back() == false,
+                 "navigation invalidation was not reported")) {
+        return 1;
+    }
+    lines.clear();
     transmitted.clear();
     if (!require(client.emergencyStop() &&
                      transmitted == QList<QByteArray>({QByteArray("!")}),

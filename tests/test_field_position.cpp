@@ -2,6 +2,7 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
+#include <QGroupBox>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -76,11 +77,20 @@ int main(int argc, char **argv) {
     auto *connection = page.findChild<QLabel *>("fieldConnectionStateLabel");
     auto *emergency = page.findChild<QLabel *>("fieldEmergencyStateLabel");
     auto *errorCode = page.findChild<QLabel *>("fieldErrorCodeLabel");
+    auto *poseControls = page.findChild<QGroupBox *>("poseControlGroup");
+    auto *navigationControls =
+        page.findChild<QGroupBox *>("navigationControlGroup");
+    auto *navInit1 = page.findChild<QPushButton *>("navigationInit1Button");
+    auto *navMove = page.findChild<QPushButton *>("navigationMoveButton");
+    auto *navTarget = page.findChild<QLabel *>("navigationTargetLabel");
+    auto *navState = page.findChild<QLabel *>("navigationStateLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
                      source && status && map && simulation->isChecked() &&
                      splitter && splitter->orientation() == Qt::Vertical &&
                      serialPanel && steering && steeringStatus && connection &&
-                     emergency && errorCode,
+                     emergency && errorCode && poseControls &&
+                     navigationControls && navInit1 && navMove && navTarget &&
+                     navState && navigationControls->isHidden(),
                  "field position page controls are incomplete")) {
         return 1;
     }
@@ -168,6 +178,57 @@ int main(int argc, char **argv) {
                  "pose was not marked stale after 500 ms") ||
         !require(steeringStatus->text().contains(QStringLiteral("数据超时")),
                  "HWT101 yaw was not marked stale after 500 ms")) {
+        return 1;
+    }
+
+    int initializedZone = 0;
+    QPointF requestedTarget;
+    QObject::connect(&page, &FieldPositionPage::navigationInitRequested,
+                     [&](int zone) { initializedZone = zone; });
+    QObject::connect(&page, &FieldPositionPage::navigationTargetRequested,
+                     [&](qint32 targetX, qint32 targetY) {
+                         requestedTarget = QPointF(targetX, targetY);
+                     });
+    page.setNavigationMode(true);
+    page.setNavigationConnected(true);
+    if (!require(poseControls->isHidden() && !navigationControls->isHidden() &&
+                     !navMove->isEnabled(),
+                 "navigation mode visibility or initial gating is incorrect")) {
+        return 1;
+    }
+    navInit1->click();
+    page.setNavigationInitialized(true);
+    page.selectFieldPoint({1160, 2050});
+    if (!require(initializedZone == 1 && navMove->isEnabled() &&
+                     navTarget->text().contains(QStringLiteral("1200")) &&
+                     navTarget->text().contains(QStringLiteral("2080")) &&
+                     map->targetFieldPosition() == QPointF(1200, 2080),
+                 "map click did not snap to the nearest safe waypoint")) {
+        return 1;
+    }
+    navMove->click();
+    if (!require(requestedTarget == QPointF(1200, 2080),
+                 "move button did not emit the snapped target")) {
+        return 1;
+    }
+    page.setNavigationEstimate(2100, 2200, 89.5, QStringLiteral("RUN"));
+    if (!require(map->displayedFieldPosition() == QPointF(2100, 2200) &&
+                     navState->text().contains(QStringLiteral("移动中")) &&
+                     source->text().contains(QStringLiteral("估计")) &&
+                     !navMove->isEnabled(),
+                 "live navigation estimate was not displayed or gated")) {
+        return 1;
+    }
+    page.setNavigationEstimate(1200, 2080, 90.0, QStringLiteral("IDLE"));
+    page.setNavigationInitialized(false);
+    if (!require(!navMove->isEnabled() &&
+                     navState->text().contains(QStringLiteral("重新初始化")),
+                 "invalid navigation pose did not disable movement")) {
+        return 1;
+    }
+    page.setNavigationMode(false);
+    if (!require(!poseControls->isHidden() && navigationControls->isHidden(),
+                 "standard pose controls were not restored")) {
         return 1;
     }
     return 0;

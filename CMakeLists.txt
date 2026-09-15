@@ -355,6 +355,9 @@ add_executable(test_mecanum_straight
 add_executable(test_mecanum_route
     ${MECANUM_JOG_DIR}/tests/test_route.c
 )
+add_executable(test_mecanum_navigation
+    ${MECANUM_JOG_DIR}/tests/test_navigation.c
+)
 add_executable(test_mecanum_can
     ${MECANUM_JOG_DIR}/tests/test_can.c
     ${MECANUM_JOG_DIR}/jog_can.c
@@ -362,7 +365,7 @@ add_executable(test_mecanum_can
 target_include_directories(test_mecanum_can PRIVATE
     ${MECANUM_JOG_DIR}/tests/stubs
 )
-foreach(target test_mecanum_straight test_mecanum_route test_mecanum_can)
+foreach(target test_mecanum_straight test_mecanum_route test_mecanum_navigation test_mecanum_can)
     set_target_properties(${target} PROPERTIES
         AUTOMOC OFF
         C_STANDARD 99
@@ -441,4 +444,8 @@ endif()
 add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)
 add_test(NAME test_mecanum_straight COMMAND test_mecanum_straight)
 add_test(NAME test_mecanum_route COMMAND test_mecanum_route)
+add_test(NAME test_mecanum_navigation COMMAND test_mecanum_navigation)
 add_test(NAME test_mecanum_can COMMAND test_mecanum_can)
+add_test(NAME test_mecanum_route_runtime
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+            ${MECANUM_JOG_DIR}/tests/test_route_runtime.ps1)

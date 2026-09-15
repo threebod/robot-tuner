@@ -61,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
     deviceModeCombo_->setObjectName(QStringLiteral("deviceModeCombo"));
     deviceModeCombo_->addItem(QStringLiteral("标准调试协议"), 0);
     deviceModeCombo_->addItem(QStringLiteral("mecanum_jog 文本协议"), 1);
+    deviceModeCombo_->setCurrentIndex(1);
 
     refreshPortsButton_ = new QPushButton("刷新串口", centralWidget);
     refreshPortsButton_->setObjectName("refreshPortsButton");
@@ -222,6 +223,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(deviceModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
                 terminalPage_->setTextStreamMode(mecanumMode());
+                fieldPositionPage_->setNavigationMode(mecanumMode());
+                fieldPositionPage_->setNavigationConnected(
+                    serialConnected_ && mecanumMode());
             });
     connect(&mecanum_, &MecanumJogClient::lineReceived, mecanumPage_,
             &MecanumJogPage::appendLine);
@@ -235,6 +239,16 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::stopAutomaticSending);
     connect(&mecanum_, &MecanumJogClient::commandFailed, this,
             &MainWindow::stopAutomaticSending);
+    connect(&mecanum_, &MecanumJogClient::navigationError, fieldPositionPage_,
+            &FieldPositionPage::setNavigationError);
+    connect(&mecanum_, &MecanumJogClient::navigationEstimateReceived,
+            fieldPositionPage_, &FieldPositionPage::setNavigationEstimate);
+    connect(&mecanum_, &MecanumJogClient::navigationValidityChanged,
+            fieldPositionPage_, &FieldPositionPage::setNavigationInitialized);
+    connect(fieldPositionPage_, &FieldPositionPage::navigationInitRequested,
+            &mecanum_, &MecanumJogClient::initializeNavigation);
+    connect(fieldPositionPage_, &FieldPositionPage::navigationTargetRequested,
+            &mecanum_, &MecanumJogClient::navigateTo);
     connect(mecanumPage_, &MecanumJogPage::commandRequested, &mecanum_,
             &MecanumJogClient::sendCommand);
     connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
@@ -368,6 +382,7 @@ MainWindow::MainWindow(QWidget *parent)
             &DeviceClient::stop);
 
     setDeviceControlsEnabled(false);
+    fieldPositionPage_->setNavigationMode(mecanumMode());
     refreshPorts();
 }
 
@@ -404,7 +419,9 @@ void MainWindow::handleSerialOpened() {
         connectionStatusLabel_->setText(
             QStringLiteral("mecanum_jog 文本串口已连接"));
         setDeviceControlsEnabled(false);
-        fieldPositionPage_->setEnabled(false);
+        fieldPositionPage_->setEnabled(true);
+        fieldPositionPage_->setNavigationMode(true);
+        fieldPositionPage_->setNavigationConnected(true);
         mecanumPage_->setEnabled(true);
         mecanumPage_->setConnected(true);
         terminalPage_->setEnabled(true);
@@ -414,6 +431,9 @@ void MainWindow::handleSerialOpened() {
         mecanum_.setConnected(true);
         return;
     }
+
+    fieldPositionPage_->setNavigationMode(false);
+    fieldPositionPage_->setNavigationConnected(false);
 
     connectionStatusLabel_->setText(QStringLiteral("串口已连接，等待设备握手"));
     if (overviewPage_ != nullptr) {
@@ -443,6 +463,7 @@ void MainWindow::handleSerialClosed() {
     mecanumPage_->setConnected(false);
     mecanumPage_->setEnabled(false);
     fieldPositionPage_->setEnabled(true);
+    fieldPositionPage_->setNavigationConnected(false);
     if (overviewPage_ != nullptr) {
         overviewPage_->setLinkState(QStringLiteral("未连接"));
         overviewPage_->setLatency(-1);

@@ -9,7 +9,9 @@
 
 class QCheckBox;
 class QDoubleSpinBox;
+class QGroupBox;
 class QLabel;
+class QPushButton;
 class QTimer;
 class SerialDebugPanel;
 
@@ -22,7 +24,9 @@ public:
     static QPointF fieldToScreen(QPointF fieldPoint, QRectF screenRect);
     static QPointF headingVector(double yawDegrees);
     QPointF displayedFieldPosition() const;
+    QPointF targetFieldPosition() const;
     void setPoseSample(PoseSample sample);
+    void setTargetPoint(QPointF point, bool visible);
 
 signals:
     void fieldPointSelected(QPointF fieldPoint);
@@ -35,6 +39,8 @@ private:
     QRectF fieldRect() const;
 
     PoseSample pose_;
+    QPointF targetPoint_;
+    bool targetVisible_{};
 };
 
 class FieldPositionPage : public QWidget {
@@ -52,6 +58,12 @@ public:
     void setEmergencyLocked(bool locked);
     void appendSerialTx(const QByteArray &bytes);
     void appendSerialRx(const QByteArray &bytes);
+    void setNavigationMode(bool enabled);
+    void setNavigationConnected(bool connected);
+    void setNavigationInitialized(bool initialized);
+    void setNavigationEstimate(qint32 xMm, qint32 yMm, double yawDegrees,
+                               const QString &state);
+    void setNavigationError(const QString &message);
 
 public slots:
     void selectFieldPoint(QPointF fieldPoint);
@@ -59,18 +71,25 @@ public slots:
 signals:
     void setPoseRequested(PoseSample sample);
     void rawSendRequested(QByteArray bytes);
+    void navigationInitRequested(int startZone);
+    void navigationTargetRequested(qint32 xMm, qint32 yMm);
 
 private:
     void applyInputPose();
     void applyPreset(qint32 xMm, qint32 yMm);
     void refreshStatus();
+    void refreshNavigationControls();
+    QPointF nearestNavigationPoint(QPointF fieldPoint) const;
 
     FieldMapWidget *map_{};
     QCheckBox *simulationCheckBox_{};
+    QGroupBox *poseControlGroup_{};
+    QGroupBox *navigationControlGroup_{};
     QDoubleSpinBox *xSpinBox_{};
     QDoubleSpinBox *ySpinBox_{};
     QDoubleSpinBox *yawSpinBox_{};
     QLabel *valueLabel_{};
+    QLabel *noticeLabel_{};
     QLabel *sourceLabel_{};
     QLabel *updatedLabel_{};
     QLabel *statusLabel_{};
@@ -81,10 +100,19 @@ private:
     QLabel *connectionStateLabel_{};
     QLabel *emergencyStateLabel_{};
     QLabel *errorCodeLabel_{};
+    QLabel *navigationTargetLabel_{};
+    QLabel *navigationStateLabel_{};
+    QPushButton *navigationMoveButton_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;
     QElapsedTimer lastImuUpdate_;
     PoseSample pose_;
     bool outOfBounds_{};
+    bool navigationMode_{};
+    bool navigationConnected_{};
+    bool navigationInitialized_{};
+    bool navigationRunning_{};
+    bool navigationTargetValid_{};
+    QPointF navigationTarget_;
 };

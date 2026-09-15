@@ -17,6 +17,9 @@ public:
     bool sendCommand(QString command);
     bool sendArmedCommand(QString command);
     bool emergencyStop();
+    bool initializeNavigation(int startZone);
+    bool navigateTo(qint32 xMm, qint32 yMm);
+    bool navigationInitialized() const;
 
 signals:
     void bytesReady(QByteArray bytes);
@@ -24,11 +27,17 @@ signals:
     void commandStateChanged(QString state);
     void commandFailed(QString reason);
     void stopRequested();
+    void navigationEstimateReceived(qint32 xMm, qint32 yMm,
+                                    double yawDegrees, QString state);
+    void navigationValidityChanged(bool initialized);
+    void navigationCompleted(qint32 xMm, qint32 yMm);
+    void navigationError(QString reason);
 
 private:
     bool validCommand(const QString &command) const;
     void handleLine(const QString &line);
     void failPending(const QString &reason);
+    void invalidateNavigation();
 
     static constexpr int kMaximumReceiveBuffer = 1024;
     QByteArray receiveBuffer_;
@@ -36,4 +45,5 @@ private:
     QTimer heartbeatTimer_;
     QTimer armTimer_;
     bool connected_{};
+    bool navigationInitialized_{};
 };
