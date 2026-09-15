@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class QLabel;
+class QSlider;
 class QSpinBox;
 class QComboBox;
 
@@ -26,5 +27,6 @@ private:
     QLabel *stateLabel_{};
     QLabel *replyLabel_{};
     QComboBox *servoIdCombo_{};
-    QSpinBox *servoAngleSpin_{};
+    QSlider *servoAngleSlider_{};
+    QLabel *servoAngleLabel_{};
 };

@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QPushButton>
+#include <QSlider>
 #include <QSpinBox>
 
 #include <iostream>
@@ -38,44 +39,50 @@ int main(int argc, char **argv) {
     QObject::connect(&page, &MecanumJogPage::armedCommandRequested,
                      [&](QString command) { armed.push_back(command); });
 
-    auto *enable = requiredChild<QPushButton>(&page, "mecanumEnableButton");
     auto *forward = requiredChild<QPushButton>(&page, "mecanumForwardButton");
     auto *lineDistance = requiredChild<QSpinBox>(&page, "mecanumLineDistanceSpin");
     auto *lineRpm = requiredChild<QSpinBox>(&page, "mecanumLineRpmSpin");
     auto *lineSend = requiredChild<QPushButton>(&page, "mecanumLineSendButton");
     auto *servoId = requiredChild<QComboBox>(&page, "mecanumServoIdCombo");
-    auto *servoAngle = requiredChild<QSpinBox>(&page, "mecanumServoAngleSpin");
-    auto *servoSend = requiredChild<QPushButton>(&page, "mecanumServoSendButton");
+    auto *servoAngle = requiredChild<QSlider>(&page, "mecanumServoAngleSlider");
+    auto *auxMotorId = requiredChild<QComboBox>(&page, "mecanumAuxMotorIdCombo");
+    auto *auxMotorDirection =
+        requiredChild<QComboBox>(&page, "mecanumAuxMotorDirectionCombo");
+    auto *auxMotorSend =
+        requiredChild<QPushButton>(&page, "mecanumAuxMotorSendButton");
     auto *routeMode = requiredChild<QComboBox>(&page, "mecanumRouteModeCombo");
     auto *routeZone = requiredChild<QComboBox>(&page, "mecanumRouteZoneCombo");
     auto *routeStart = requiredChild<QPushButton>(&page, "mecanumRouteStartButton");
+    auto *routeRpm = requiredChild<QSpinBox>(&page, "mecanumRouteRpmSpin");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
-    if (!enable || !forward || !lineDistance || !lineRpm || !lineSend ||
-        !servoId || !servoAngle || !servoSend || !routeMode || !routeZone ||
-        !routeStart || !turnDirection || !turnAngle || !turnSend) {
+    if (!forward || !lineDistance || !lineRpm || !lineSend || !servoId ||
+        !servoAngle || !auxMotorId || !auxMotorDirection ||
+        !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
+        !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
 
     page.setConnected(false);
-    if (!require(!enable->isEnabled(), "commands enabled while disconnected")) {
+    if (!require(!forward->isEnabled(), "commands enabled while disconnected") ||
+        !require(page.findChild<QPushButton *>("mecanumEnableButton") == nullptr,
+                 "manual enable control was not removed")) {
         return 1;
     }
     page.setConnected(true);
-    enable->click();
     forward->click();
     lineDistance->setValue(100);
     lineRpm->setValue(30);
     lineSend->click();
-    if (!require(armed == QStringList({QStringLiteral("enable"),
-                                       QStringLiteral("W"),
+    if (!require(armed == QStringList({QStringLiteral("W"),
                                        QStringLiteral("line W 100 30")}),
                  "armed command mapping is incorrect")) {
         return 1;
     }
-    if (!require(lineDistance->minimum() == 20 && lineDistance->maximum() == 500 &&
-                     lineRpm->minimum() == 10 && lineRpm->maximum() == 60,
+    if (!require(lineDistance->minimum() == 100 && lineDistance->maximum() == 500 &&
+                     lineDistance->singleStep() == 100 &&
+                     lineRpm->minimum() == 10 && lineRpm->maximum() == 120,
                  "line parameter bounds are incorrect")) {
         return 1;
     }
@@ -86,7 +93,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     servoAngle->setValue(360);
-    servoSend->click();
+    QMetaObject::invokeMethod(servoAngle, "sliderReleased");
     servoId->setCurrentText(QStringLiteral("2"));
     if (!require(servoAngle->maximum() == 270,
                  "servo 2 did not clamp to 270 degrees")) {
@@ -95,6 +102,7 @@ int main(int argc, char **argv) {
 
     routeMode->setCurrentText(QStringLiteral("step"));
     routeZone->setCurrentText(QStringLiteral("2"));
+    routeRpm->setValue(120);
     routeStart->click();
     routeMode->setCurrentText(QStringLiteral("auto"));
     routeStart->click();
@@ -102,8 +110,8 @@ int main(int argc, char **argv) {
     turnAngle->setValue(90);
     turnSend->click();
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&
-                     armed.contains(QStringLiteral("route step 2")) &&
-                     armed.contains(QStringLiteral("route auto 2")) &&
+                     armed.contains(QStringLiteral("route step 2 120")) &&
+                     armed.contains(QStringLiteral("route auto 2 120")) &&
                      armed.contains(QStringLiteral("turn R 90")) &&
                      routeMode->count() == 3 && turnAngle->minimum() == 1 &&
                      turnAngle->maximum() == 180,
@@ -112,15 +120,12 @@ int main(int argc, char **argv) {
     }
 
     const QStringList requiredButtons = {
-        QStringLiteral("mecanumDisableButton"),
-        QStringLiteral("mecanumEnable5Button"),
-        QStringLiteral("mecanumDisable5Button"),
         QStringLiteral("mecanumStopButton"),
         QStringLiteral("mecanumBackButton"),
         QStringLiteral("mecanumLeftButton"),
         QStringLiteral("mecanumRightButton"),
         QStringLiteral("mecanumStraightSendButton"),
-        QStringLiteral("mecanumMotor5SendButton"),
+        QStringLiteral("mecanumAuxMotorSendButton"),
         QStringLiteral("mecanumWheelSendButton"),
         QStringLiteral("mecanumCanCheckButton"),
         QStringLiteral("mecanumInvertSendButton"),
@@ -141,8 +146,6 @@ int main(int argc, char **argv) {
     plain.clear();
     armed.clear();
     const QStringList plainButtonNames = {
-        QStringLiteral("mecanumDisableButton"),
-        QStringLiteral("mecanumDisable5Button"),
         QStringLiteral("mecanumStopButton"),
         QStringLiteral("mecanumCanCheckButton"),
         QStringLiteral("mecanumInvertSendButton"),
@@ -157,20 +160,19 @@ int main(int argc, char **argv) {
         page.findChild<QPushButton *>(name)->click();
     }
     const QStringList armedButtonNames = {
-        QStringLiteral("mecanumEnable5Button"),
         QStringLiteral("mecanumBackButton"),
         QStringLiteral("mecanumLeftButton"),
         QStringLiteral("mecanumRightButton"),
         QStringLiteral("mecanumStraightSendButton"),
-        QStringLiteral("mecanumMotor5SendButton"),
         QStringLiteral("mecanumWheelSendButton")};
     for (const QString &name : armedButtonNames) {
         page.findChild<QPushButton *>(name)->click();
     }
+    auxMotorId->setCurrentText(QStringLiteral("6"));
+    auxMotorDirection->setCurrentText(QStringLiteral("1"));
+    auxMotorSend->click();
     if (!require(
-            plain == QStringList({QStringLiteral("disable"),
-                                  QStringLiteral("disable5"),
-                                  QStringLiteral("stop"),
+            plain == QStringList({QStringLiteral("stop"),
                                   QStringLiteral("cancheck 1"),
                                   QStringLiteral("invert 1 0"),
                                   QStringLiteral("trim 1 1000"),
@@ -180,13 +182,12 @@ int main(int argc, char **argv) {
                                   QStringLiteral("route next"),
                                   QStringLiteral("route status"),
                                   QStringLiteral("help")}) &&
-                armed == QStringList({QStringLiteral("enable5"),
-                                      QStringLiteral("S"),
+                armed == QStringList({QStringLiteral("S"),
                                       QStringLiteral("A"),
                                       QStringLiteral("D"),
                                       QStringLiteral("straight W 2000 30"),
-                                      QStringLiteral("motor5 0"),
-                                      QStringLiteral("wheel 1 0")}),
+                                      QStringLiteral("wheel 1 0"),
+                                      QStringLiteral("motor 6 1")}),
             "one or more mecanum controls emitted the wrong command")) {
         return 1;
     }

@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSlider>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -64,30 +65,6 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                 });
     };
 
-    auto *safety = new QGroupBox(QStringLiteral("安全与使能"), controls_);
-    auto *safetyLayout = new QHBoxLayout(safety);
-    auto *enable = button(QStringLiteral("使能 1–4"),
-                          QStringLiteral("mecanumEnableButton"), safety);
-    auto *disable = button(QStringLiteral("失能 1–4"),
-                           QStringLiteral("mecanumDisableButton"), safety);
-    auto *enable5 = button(QStringLiteral("使能 5"),
-                           QStringLiteral("mecanumEnable5Button"), safety);
-    auto *disable5 = button(QStringLiteral("失能 5"),
-                            QStringLiteral("mecanumDisable5Button"), safety);
-    auto *stop = button(QStringLiteral("停止"),
-                        QStringLiteral("mecanumStopButton"), safety);
-    bind(enable, QStringLiteral("enable"), true);
-    bind(disable, QStringLiteral("disable"), false);
-    bind(enable5, QStringLiteral("enable5"), true);
-    bind(disable5, QStringLiteral("disable5"), false);
-    bind(stop, QStringLiteral("stop"), false);
-    safetyLayout->addWidget(enable);
-    safetyLayout->addWidget(disable);
-    safetyLayout->addWidget(enable5);
-    safetyLayout->addWidget(disable5);
-    safetyLayout->addWidget(stop);
-    grid->addWidget(safety, 0, 0, 1, 2);
-
     auto *chassis = new QGroupBox(QStringLiteral("底盘"), controls_);
     auto *chassisLayout = new QGridLayout(chassis);
     auto *forward = button(QStringLiteral("前进 W"),
@@ -98,23 +75,29 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                         QStringLiteral("mecanumLeftButton"), chassis);
     auto *right = button(QStringLiteral("右移 D"),
                          QStringLiteral("mecanumRightButton"), chassis);
+    auto *stop = button(QStringLiteral("停止"),
+                        QStringLiteral("mecanumStopButton"), chassis);
     bind(forward, QStringLiteral("W"), true);
     bind(back, QStringLiteral("S"), true);
     bind(left, QStringLiteral("A"), true);
     bind(right, QStringLiteral("D"), true);
+    bind(stop, QStringLiteral("stop"), false);
     chassisLayout->addWidget(forward, 0, 1);
     chassisLayout->addWidget(left, 1, 0);
     chassisLayout->addWidget(back, 1, 1);
     chassisLayout->addWidget(right, 1, 2);
+    chassisLayout->addWidget(stop, 1, 3);
 
     auto *lineDirection = combo(QStringLiteral("mecanumLineDirectionCombo"),
                                 {QStringLiteral("W"), QStringLiteral("S")},
                                 chassis);
     auto *lineDistance = spin(QStringLiteral("mecanumLineDistanceSpin"),
-                              20, 500, 100, chassis);
+                              100, 500, 100, chassis);
+    lineDistance->setSingleStep(100);
     lineDistance->setSuffix(QStringLiteral(" mm"));
-    auto *lineRpm = spin(QStringLiteral("mecanumLineRpmSpin"), 10, 60, 30,
+    auto *lineRpm = spin(QStringLiteral("mecanumLineRpmSpin"), 10, 120, 30,
                          chassis);
+    lineRpm->setSingleStep(10);
     lineRpm->setSuffix(QStringLiteral(" RPM"));
     auto *lineSend = button(QStringLiteral("发送 line"),
                             QStringLiteral("mecanumLineSendButton"), chassis);
@@ -140,7 +123,8 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
         chassis);
     straightDuration->setSuffix(QStringLiteral(" ms"));
     auto *straightRpm = spin(QStringLiteral("mecanumStraightRpmSpin"),
-                             10, 60, 30, chassis);
+                             10, 120, 30, chassis);
+    straightRpm->setSingleStep(10);
     straightRpm->setSuffix(QStringLiteral(" RPM"));
     auto *straightSend = button(
         QStringLiteral("发送 straight"),
@@ -159,7 +143,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     chassisLayout->addWidget(straightDuration, 3, 2);
     chassisLayout->addWidget(straightRpm, 3, 3);
     chassisLayout->addWidget(straightSend, 3, 4);
-    grid->addWidget(chassis, 1, 0, 1, 2);
+    grid->addWidget(chassis, 0, 0, 1, 2);
 
     auto *diagnostics = new QGroupBox(QStringLiteral("单轮与 CAN"), controls_);
     auto *diagnosticsLayout = new QFormLayout(diagnostics);
@@ -169,21 +153,26 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
         row->layout()->setContentsMargins(0, 0, 0, 0);
         return row;
     };
-    auto *motor5Row = makeRow();
-    auto *motor5Direction = combo(QStringLiteral("mecanumMotor5DirectionCombo"),
-                                  {QStringLiteral("0"), QStringLiteral("1")},
-                                  motor5Row);
-    auto *motor5Send = button(QStringLiteral("点动"),
-                              QStringLiteral("mecanumMotor5SendButton"),
-                              motor5Row);
-    motor5Row->layout()->addWidget(motor5Direction);
-    motor5Row->layout()->addWidget(motor5Send);
-    connect(motor5Send, &QPushButton::clicked, this,
-            [this, motor5Direction] {
-                emit armedCommandRequested(
-                    QStringLiteral("motor5 %1").arg(motor5Direction->currentText()));
+    auto *auxMotorRow = makeRow();
+    auto *auxMotorId = combo(QStringLiteral("mecanumAuxMotorIdCombo"),
+                             {QStringLiteral("5"), QStringLiteral("6")},
+                             auxMotorRow);
+    auto *auxMotorDirection = combo(
+        QStringLiteral("mecanumAuxMotorDirectionCombo"),
+        {QStringLiteral("0"), QStringLiteral("1")}, auxMotorRow);
+    auto *auxMotorSend = button(QStringLiteral("点动"),
+                                QStringLiteral("mecanumAuxMotorSendButton"),
+                                auxMotorRow);
+    auxMotorRow->layout()->addWidget(auxMotorId);
+    auxMotorRow->layout()->addWidget(auxMotorDirection);
+    auxMotorRow->layout()->addWidget(auxMotorSend);
+    connect(auxMotorSend, &QPushButton::clicked, this,
+            [this, auxMotorId, auxMotorDirection] {
+                emit armedCommandRequested(QStringLiteral("motor %1 %2")
+                                                .arg(auxMotorId->currentText())
+                                                .arg(auxMotorDirection->currentText()));
             });
-    diagnosticsLayout->addRow(QStringLiteral("5 号电机"), motor5Row);
+    diagnosticsLayout->addRow(QStringLiteral("辅助电机"), auxMotorRow);
 
     auto *wheelRow = makeRow();
     auto *wheelId = spin(QStringLiteral("mecanumWheelIdSpin"), 1, 4, 1, wheelRow);
@@ -204,7 +193,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     diagnosticsLayout->addRow(QStringLiteral("单轮"), wheelRow);
 
     auto *canRow = makeRow();
-    auto *canId = spin(QStringLiteral("mecanumCanIdSpin"), 1, 5, 1, canRow);
+    auto *canId = spin(QStringLiteral("mecanumCanIdSpin"), 1, 6, 1, canRow);
     auto *canButton = button(QStringLiteral("查询 CAN"),
                              QStringLiteral("mecanumCanCheckButton"), canRow);
     canRow->layout()->addWidget(canId);
@@ -249,7 +238,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                                           .arg(trimValue->value()));
             });
     diagnosticsLayout->addRow(QStringLiteral("轮速比例"), trimRow);
-    grid->addWidget(diagnostics, 2, 0);
+    grid->addWidget(diagnostics, 1, 0);
 
     auto *servoImu = new QGroupBox(QStringLiteral("舵机与 IMU"), controls_);
     auto *servoImuLayout = new QFormLayout(servoImu);
@@ -257,21 +246,28 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     servoIdCombo_ = combo(QStringLiteral("mecanumServoIdCombo"),
                           {QStringLiteral("2"), QStringLiteral("3"),
                            QStringLiteral("4")}, servoRow);
-    servoAngleSpin_ = spin(QStringLiteral("mecanumServoAngleSpin"), 0, 270, 0,
-                           servoRow);
-    auto *servoSend = button(QStringLiteral("发送角度"),
-                             QStringLiteral("mecanumServoSendButton"), servoRow);
+    servoAngleSlider_ = new QSlider(Qt::Horizontal, servoRow);
+    servoAngleSlider_->setObjectName(QStringLiteral("mecanumServoAngleSlider"));
+    servoAngleSlider_->setRange(0, 270);
+    servoAngleLabel_ = new QLabel(QStringLiteral("0°"), servoRow);
+    servoAngleLabel_->setObjectName(QStringLiteral("mecanumServoAngleValueLabel"));
     servoRow->layout()->addWidget(servoIdCombo_);
-    servoRow->layout()->addWidget(servoAngleSpin_);
-    servoRow->layout()->addWidget(servoSend);
+    servoRow->layout()->addWidget(servoAngleSlider_);
+    servoRow->layout()->addWidget(servoAngleLabel_);
     connect(servoIdCombo_, &QComboBox::currentTextChanged, this,
             [this](const QString &id) {
-                servoAngleSpin_->setMaximum(id == QStringLiteral("4") ? 360 : 270);
+                servoAngleSlider_->setMaximum(
+                    id == QStringLiteral("4") ? 360 : 270);
+                servoAngleLabel_->setText(
+                    QStringLiteral("%1°").arg(servoAngleSlider_->value()));
             });
-    connect(servoSend, &QPushButton::clicked, this, [this] {
+    connect(servoAngleSlider_, &QSlider::valueChanged, this, [this](int angle) {
+        servoAngleLabel_->setText(QStringLiteral("%1°").arg(angle));
+    });
+    connect(servoAngleSlider_, &QSlider::sliderReleased, this, [this] {
         emit commandRequested(QStringLiteral("servo %1 %2")
                                   .arg(servoIdCombo_->currentText())
-                                  .arg(servoAngleSpin_->value()));
+                                  .arg(servoAngleSlider_->value()));
     });
     servoImuLayout->addRow(QStringLiteral("舵机"), servoRow);
 
@@ -303,7 +299,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     });
     bind(status, QStringLiteral("status"), false);
     servoImuLayout->addRow(QStringLiteral("航向"), yawRow);
-    grid->addWidget(servoImu, 2, 1);
+    grid->addWidget(servoImu, 1, 1);
 
     auto *route = new QGroupBox(QStringLiteral("路线"), controls_);
     auto *routeLayout = new QHBoxLayout(route);
@@ -313,6 +309,10 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                             route);
     auto *routeZone = combo(QStringLiteral("mecanumRouteZoneCombo"),
                             {QStringLiteral("1"), QStringLiteral("2")}, route);
+    auto *routeRpm = spin(QStringLiteral("mecanumRouteRpmSpin"), 10, 120, 60,
+                          route);
+    routeRpm->setSingleStep(10);
+    routeRpm->setSuffix(QStringLiteral(" RPM"));
     auto *routeStart = button(QStringLiteral("启动路线"),
                               QStringLiteral("mecanumRouteStartButton"), route);
     auto *routeNext = button(QStringLiteral("继续"),
@@ -330,10 +330,11 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     auto *turnSend = button(QStringLiteral("原地旋转"),
                             QStringLiteral("mecanumTurnSendButton"), route);
     connect(routeStart, &QPushButton::clicked, this,
-            [this, routeMode, routeZone] {
-                emit armedCommandRequested(QStringLiteral("route %1 %2")
+            [this, routeMode, routeZone, routeRpm] {
+                emit armedCommandRequested(QStringLiteral("route %1 %2 %3")
                                                .arg(routeMode->currentText())
-                                               .arg(routeZone->currentText()));
+                                               .arg(routeZone->currentText())
+                                               .arg(routeRpm->value()));
             });
     bind(routeNext, QStringLiteral("route next"), false);
     bind(routeStatus, QStringLiteral("route status"), false);
@@ -348,6 +349,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLayout->addWidget(routeMode);
     routeLayout->addWidget(new QLabel(QStringLiteral("启停区"), route));
     routeLayout->addWidget(routeZone);
+    routeLayout->addWidget(routeRpm);
     routeLayout->addWidget(routeStart);
     routeLayout->addWidget(routeNext);
     routeLayout->addWidget(routeStatus);
@@ -355,7 +357,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLayout->addWidget(turnAngle);
     routeLayout->addWidget(turnSend);
     routeLayout->addWidget(help);
-    grid->addWidget(route, 3, 0, 1, 2);
+    grid->addWidget(route, 2, 0, 1, 2);
 
     scroll->setWidget(controls_);
     pageLayout->addWidget(scroll, 1);

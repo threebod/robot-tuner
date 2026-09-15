@@ -97,8 +97,7 @@ bool MecanumJogClient::sendCommand(QString command) {
     const bool stopping =
         command == QStringLiteral("stop") || command == QStringLiteral("X") ||
         command == QStringLiteral("x") ||
-        command == QStringLiteral("disable") ||
-        command == QStringLiteral("disable5");
+        command == QStringLiteral("disable");
     if (stopping) {
         armTimer_.stop();
         pendingCommand_.clear();
@@ -160,15 +159,21 @@ bool MecanumJogClient::initializeNavigation(int startZone) {
     return sendCommand(QStringLiteral("nav init %1").arg(startZone));
 }
 
-bool MecanumJogClient::navigateTo(qint32 xMm, qint32 yMm) {
+bool MecanumJogClient::navigateTo(qint32 xMm, qint32 yMm, quint16 rpm) {
     if (xMm < 0 || xMm > 2400 || yMm < 0 || yMm > 2400) {
         const QString error = QStringLiteral("目标坐标超出地图范围");
         emit navigationError(error);
         emit commandFailed(error);
         return false;
     }
+    if (rpm < 10 || rpm > 120) {
+        const QString error = QStringLiteral("导航转速必须为 10～120 RPM");
+        emit navigationError(error);
+        emit commandFailed(error);
+        return false;
+    }
     return sendArmedCommand(
-        QStringLiteral("nav goto %1 %2").arg(xMm).arg(yMm));
+        QStringLiteral("nav goto %1 %2 %3").arg(xMm).arg(yMm).arg(rpm));
 }
 
 bool MecanumJogClient::navigationInitialized() const {

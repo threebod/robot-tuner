@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -260,12 +261,19 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     navigationStateLabel_->setObjectName(
         QStringLiteral("navigationStateLabel"));
     navigationStateLabel_->setWordWrap(true);
+    navigationRpmSpin_ = new QSpinBox(navigationControlGroup_);
+    navigationRpmSpin_->setObjectName(QStringLiteral("navigationRpmSpin"));
+    navigationRpmSpin_->setRange(10, 120);
+    navigationRpmSpin_->setSingleStep(10);
+    navigationRpmSpin_->setValue(60);
+    navigationRpmSpin_->setSuffix(QStringLiteral(" RPM"));
     navigationMoveButton_ = new QPushButton(QStringLiteral("移动到目标"),
                                             navigationControlGroup_);
     navigationMoveButton_->setObjectName(
         QStringLiteral("navigationMoveButton"));
     navigationLayout->addWidget(navigationTargetLabel_);
     navigationLayout->addWidget(navigationStateLabel_);
+    navigationLayout->addWidget(navigationRpmSpin_);
     navigationLayout->addWidget(navigationMoveButton_);
     navigationControlGroup_->hide();
     panel->addWidget(navigationControlGroup_);
@@ -347,7 +355,8 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
         refreshNavigationControls();
         emit navigationTargetRequested(
             static_cast<qint32>(navigationTarget_.x()),
-            static_cast<qint32>(navigationTarget_.y()));
+            static_cast<qint32>(navigationTarget_.y()),
+            static_cast<quint16>(navigationRpmSpin_->value()));
     });
     connect(serialPanel_, &SerialDebugPanel::rawSendRequested, this,
             &FieldPositionPage::rawSendRequested);

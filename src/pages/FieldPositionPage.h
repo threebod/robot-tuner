@@ -12,6 +12,7 @@ class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
 class QPushButton;
+class QSpinBox;
 class QTimer;
 class SerialDebugPanel;
 
@@ -72,7 +73,7 @@ signals:
     void setPoseRequested(PoseSample sample);
     void rawSendRequested(QByteArray bytes);
     void navigationInitRequested(int startZone);
-    void navigationTargetRequested(qint32 xMm, qint32 yMm);
+    void navigationTargetRequested(qint32 xMm, qint32 yMm, quint16 rpm);
 
 private:
     void applyInputPose();
@@ -103,6 +104,7 @@ private:
     QLabel *navigationTargetLabel_{};
     QLabel *navigationStateLabel_{};
     QPushButton *navigationMoveButton_{};
+    QSpinBox *navigationRpmSpin_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;

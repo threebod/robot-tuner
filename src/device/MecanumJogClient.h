@@ -18,7 +18,7 @@ public:
     bool sendArmedCommand(QString command);
     bool emergencyStop();
     bool initializeNavigation(int startZone);
-    bool navigateTo(qint32 xMm, qint32 yMm);
+    bool navigateTo(qint32 xMm, qint32 yMm, quint16 rpm = 60);
     bool navigationInitialized() const;
 
 signals:

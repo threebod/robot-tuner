@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSplitter>
+#include <QSpinBox>
 #include <QTimer>
 
 #include <cmath>
@@ -82,6 +83,7 @@ int main(int argc, char **argv) {
         page.findChild<QGroupBox *>("navigationControlGroup");
     auto *navInit1 = page.findChild<QPushButton *>("navigationInit1Button");
     auto *navMove = page.findChild<QPushButton *>("navigationMoveButton");
+    auto *navRpm = page.findChild<QSpinBox *>("navigationRpmSpin");
     auto *navTarget = page.findChild<QLabel *>("navigationTargetLabel");
     auto *navState = page.findChild<QLabel *>("navigationStateLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
@@ -89,7 +91,7 @@ int main(int argc, char **argv) {
                      splitter && splitter->orientation() == Qt::Vertical &&
                      serialPanel && steering && steeringStatus && connection &&
                      emergency && errorCode && poseControls &&
-                     navigationControls && navInit1 && navMove && navTarget &&
+                     navigationControls && navInit1 && navMove && navRpm && navTarget &&
                      navState && navigationControls->isHidden(),
                  "field position page controls are incomplete")) {
         return 1;
@@ -183,11 +185,13 @@ int main(int argc, char **argv) {
 
     int initializedZone = 0;
     QPointF requestedTarget;
+    quint16 requestedRpm = 0;
     QObject::connect(&page, &FieldPositionPage::navigationInitRequested,
                      [&](int zone) { initializedZone = zone; });
     QObject::connect(&page, &FieldPositionPage::navigationTargetRequested,
-                     [&](qint32 targetX, qint32 targetY) {
+                     [&](qint32 targetX, qint32 targetY, quint16 rpm) {
                          requestedTarget = QPointF(targetX, targetY);
+                         requestedRpm = rpm;
                      });
     page.setNavigationMode(true);
     page.setNavigationConnected(true);
@@ -198,6 +202,7 @@ int main(int argc, char **argv) {
     }
     navInit1->click();
     page.setNavigationInitialized(true);
+    navRpm->setValue(120);
     page.selectFieldPoint({1160, 2050});
     if (!require(initializedZone == 1 && navMove->isEnabled() &&
                      navTarget->text().contains(QStringLiteral("1200")) &&
@@ -207,8 +212,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     navMove->click();
-    if (!require(requestedTarget == QPointF(1200, 2080),
-                 "move button did not emit the snapped target")) {
+    if (!require(requestedTarget == QPointF(1200, 2080) && requestedRpm == 120,
+                 "move button did not emit the snapped target and speed")) {
         return 1;
     }
     page.setNavigationEstimate(2100, 2200, 89.5, QStringLiteral("RUN"));

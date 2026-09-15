@@ -1009,7 +1009,7 @@ int main(int argc, char **argv) {
     if (!require(textWrites ==
                      QList<QByteArray>({QByteArray("nav init 1\r\n"),
                                         QByteArray("arm\r\n"),
-                                        QByteArray("nav goto 1200 2080\r\n")}),
+                                        QByteArray("nav goto 1200 2080 60\r\n")}),
                  "map navigation UI is not wired to the text client")) {
         return 1;
     }

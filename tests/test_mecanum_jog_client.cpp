@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     transmitted.clear();
-    if (!require(client.navigateTo(400, 1200) &&
+    if (!require(client.navigateTo(400, 1200, 120) &&
                      transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
                  "navigation target did not start the arm handshake")) {
         return 1;
@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
     client.ingestBytes(QByteArrayView(
         "ARMED for one enable or motion command\r\n"));
     if (!require(transmitted == QList<QByteArray>({QByteArray("arm\r\n"),
-                                                   QByteArray("nav goto 400 1200\r\n")}),
+                                                   QByteArray("nav goto 400 1200 120\r\n")}),
                  "navigation target command is incorrect")) {
         return 1;
     }
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
     }
 
     for (const QString &stop : {QStringLiteral("!\r\n"), QStringLiteral("X"),
-                               QStringLiteral("disable"), QStringLiteral("disable5")}) {
+                               QStringLiteral("disable")}) {
         transmitted.clear();
         client.sendArmedCommand(QStringLiteral("W"));
         client.sendCommand(stop);
@@ -190,6 +190,15 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+
+    transmitted.clear();
+    client.sendArmedCommand(QStringLiteral("W"));
+    if (!require(!client.sendCommand(QStringLiteral("disable5")) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "removed disable5 command bypassed pending authorization")) {
+        return 1;
+    }
+    client.sendCommand(QStringLiteral("stop"));
 
     transmitted.clear();
     failures.clear();
