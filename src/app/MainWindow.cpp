@@ -446,6 +446,8 @@ void MainWindow::handleSerialOpened() {
         fieldPositionPage_->setEnabled(true);
         fieldPositionPage_->setNavigationMode(true);
         fieldPositionPage_->setNavigationConnected(true);
+        fieldPositionPage_->setConnectionState(
+            QStringLiteral("mecanum_jog 文本串口已连接"), true);
         mecanumPage_->setEnabled(true);
         mecanumPage_->setConnected(true);
         mechanismActionPage_->setEnabled(true);

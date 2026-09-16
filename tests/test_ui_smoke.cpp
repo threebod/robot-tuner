@@ -963,6 +963,8 @@ int main(int argc, char **argv) {
     auto *textActionRecorder =
         textWindow.findChild<MechanismActionPage *>("动作录入");
     auto *textField = textWindow.findChild<FieldPositionPage *>("场地定位");
+    auto *textFieldConnection =
+        textWindow.findChild<QLabel *>("fieldConnectionStateLabel");
     auto *textNavControls =
         textWindow.findChild<QGroupBox *>("navigationControlGroup");
     auto *textNavInit1 =
@@ -989,6 +991,12 @@ int main(int argc, char **argv) {
     if (!require(QMetaObject::invokeMethod(&textWindow, "handleSerialOpened",
                                            Qt::DirectConnection),
                  "text serial-open handler could not be invoked")) {
+        return 1;
+    }
+    if (!require(textFieldConnection &&
+                     textFieldConnection->text().contains(
+                         QStringLiteral("文本串口已连接")),
+                 "text mode field monitor did not show the serial connection")) {
         return 1;
     }
     waitFor(300);

@@ -222,14 +222,18 @@ int main(int argc, char **argv) {
                      navState->text().contains(QStringLiteral("移动中")) &&
                      source->text().contains(QStringLiteral("估计")) &&
                      updated->text().contains(QStringLiteral("上位机接收时间")) &&
+                     steering->text().contains(QStringLiteral("89.50")) &&
+                     steeringStatus->text().contains(QStringLiteral("正常")) &&
+                     status->text().contains(QStringLiteral("移动中")) &&
                      !navMove->isEnabled(),
-                 "live navigation estimate was not displayed or gated")) {
+                 "live navigation estimate was not synchronized to the monitor")) {
         return 1;
     }
     page.setNavigationEstimate(1200, 2080, 90.0, QStringLiteral("IDLE"));
     page.setNavigationInitialized(false);
     if (!require(!navMove->isEnabled() &&
-                     navState->text().contains(QStringLiteral("重新初始化")),
+                     navState->text().contains(QStringLiteral("重新初始化")) &&
+                     status->text().contains(QStringLiteral("位置无效")),
                  "invalid navigation pose did not disable movement")) {
         return 1;
     }

@@ -450,6 +450,10 @@ void FieldPositionPage::setNavigationMode(bool enabled) {
         enabled
             ? QStringLiteral("仅沿预定义安全航点移动；位置来自命令积分估计，不是真实定位。")
             : QStringLiteral("调试显示用途；现场布置可能偏离名义尺寸，不用于导航控制。"));
+    capabilityLabel_->setText(
+        enabled ? QStringLiteral("定位方式：命令积分估计（非真实定位）")
+                : QStringLiteral("设备位姿能力：未声明"));
+    refreshStatus();
     refreshNavigationControls();
 }
 
@@ -470,6 +474,7 @@ void FieldPositionPage::setNavigationInitialized(bool initialized) {
     navigationStateLabel_->setText(
         initialized ? QStringLiteral("状态：已初始化，请点击地图选择安全航点")
                     : QStringLiteral("状态：位置无效，请回到启停区后重新初始化"));
+    refreshStatus();
     refreshNavigationControls();
 }
 
@@ -485,6 +490,14 @@ void FieldPositionPage::setNavigationEstimate(qint32 xMm, qint32 yMm,
     navigationRunning_ = state == QStringLiteral("RUN") ||
                          state == QStringLiteral("TURN");
     setPoseSample(sample, QStringLiteral("地图导航估计（非真实定位）"));
+    steeringAngleLabel_->setText(
+        QStringLiteral("%1°").arg(yawDegrees, 0, 'f', 2));
+    steeringUpdatedLabel_->setText(
+        QStringLiteral("%1（上位机接收时间）")
+            .arg(QDateTime::currentDateTime().toString(
+                QStringLiteral("HH:mm:ss.zzz"))));
+    lastImuUpdate_.restart();
+    refreshStatus();
     updatedLabel_->setText(
         QStringLiteral("更新时间：%1（上位机接收时间）")
             .arg(QDateTime::currentDateTime().toString(
@@ -568,6 +581,38 @@ void FieldPositionPage::applyPreset(qint32 xMm, qint32 yMm) {
 }
 
 void FieldPositionPage::refreshStatus() {
+    if (navigationMode_) {
+        const bool stale = navigationRunning_ &&
+                           (!lastUpdate_.isValid() || lastUpdate_.elapsed() > 1000);
+        const bool imuStale = navigationRunning_ &&
+                              (!lastImuUpdate_.isValid() ||
+                               lastImuUpdate_.elapsed() > 1000);
+        steeringStatusLabel_->setText(
+            imuStale ? QStringLiteral("导航航向超时")
+                     : !navigationInitialized_
+                           ? QStringLiteral("等待导航初始化")
+                           : navigationRunning_
+                                 ? QStringLiteral("正常")
+                                 : QStringLiteral("随导航状态更新"));
+        steeringStatusLabel_->setStyleSheet(
+            imuStale ? QStringLiteral("color: #b91c1c; font-weight: bold;")
+                     : QString());
+        if (!navigationInitialized_) {
+            statusLabel_->setText(QStringLiteral("状态：位置无效，请先初始化"));
+            statusLabel_->setStyleSheet(
+                QStringLiteral("color: #b91c1c; font-weight: bold;"));
+        } else if (stale) {
+            statusLabel_->setText(QStringLiteral("状态：导航数据超时"));
+            statusLabel_->setStyleSheet(
+                QStringLiteral("color: #b91c1c; font-weight: bold;"));
+        } else {
+            statusLabel_->setText(
+                navigationRunning_ ? QStringLiteral("状态：移动中（估计位置）")
+                                   : QStringLiteral("状态：已初始化（估计位置）"));
+            statusLabel_->setStyleSheet({});
+        }
+        return;
+    }
     if (!lastImuUpdate_.isValid() || lastImuUpdate_.elapsed() > 500) {
         steeringStatusLabel_->setText(QStringLiteral("数据超时"));
         steeringStatusLabel_->setStyleSheet(
