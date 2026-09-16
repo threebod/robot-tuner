@@ -13,6 +13,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets SerialPort)
 
 add_executable(robot_tuner
     src/main.cpp
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
     src/pages/ChassisPage.cpp
     src/pages/ChassisPage.h
     src/pages/FieldPositionPage.cpp
@@ -193,6 +195,8 @@ target_link_libraries(test_device_client PRIVATE Qt6::Core)
 
 add_executable(test_mecanum_jog_client
     tests/test_mecanum_jog_client.cpp
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
     src/device/MecanumJogClient.cpp
     src/device/MecanumJogClient.h
 )

@@ -6,6 +6,8 @@
 #include <QString>
 #include <QTimer>
 
+#include "device/MechanismActionModel.h"
+
 class MecanumJogClient : public QObject {
     Q_OBJECT
 
@@ -20,6 +22,10 @@ public:
     bool initializeNavigation(int startZone);
     bool navigateTo(qint32 xMm, qint32 yMm, quint16 rpm = 60);
     bool navigationInitialized() const;
+    bool initializeMechanism(const MechanismPoseData &pose);
+    bool moveMechanism(const MechanismPoseData &pose);
+    bool requestMechanismStatus();
+    bool mechanismInitialized() const;
 
 signals:
     void bytesReady(QByteArray bytes);
@@ -32,12 +38,17 @@ signals:
     void navigationValidityChanged(bool initialized);
     void navigationCompleted(qint32 xMm, qint32 yMm);
     void navigationError(QString reason);
+    void mechanismEstimateReceived(MechanismPoseData pose, QString state);
+    void mechanismValidityChanged(bool initialized);
+    void mechanismCompleted(MechanismPoseData pose);
+    void mechanismError(QString reason);
 
 private:
     bool validCommand(const QString &command) const;
     void handleLine(const QString &line);
     void failPending(const QString &reason);
     void invalidateNavigation();
+    void invalidateMechanism();
 
     static constexpr int kMaximumReceiveBuffer = 1024;
     QByteArray receiveBuffer_;
@@ -46,4 +57,5 @@ private:
     QTimer armTimer_;
     bool connected_{};
     bool navigationInitialized_{};
+    bool mechanismInitialized_{};
 };

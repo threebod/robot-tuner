@@ -5,6 +5,7 @@
 
 #include <iostream>
 
+#include "device/MechanismActionModel.h"
 #include "device/MecanumJogClient.h"
 
 namespace {
@@ -35,6 +36,10 @@ int main(int argc, char **argv) {
     QList<QPointF> navigationPositions;
     QList<bool> navigationValidity;
     QList<QPointF> navigationCompletions;
+    QList<MechanismPoseData> mechanismPositions;
+    QStringList mechanismStates;
+    QList<bool> mechanismValidity;
+    QList<MechanismPoseData> mechanismCompletions;
     QObject::connect(&client, &MecanumJogClient::bytesReady,
                      [&](QByteArray bytes) { transmitted.push_back(bytes); });
     QObject::connect(&client, &MecanumJogClient::lineReceived,
@@ -53,6 +58,18 @@ int main(int argc, char **argv) {
     QObject::connect(&client, &MecanumJogClient::navigationCompleted,
                      [&](qint32 xMm, qint32 yMm) {
                          navigationCompletions.push_back(QPointF(xMm, yMm));
+                     });
+    QObject::connect(
+        &client, &MecanumJogClient::mechanismEstimateReceived,
+        [&](MechanismPoseData pose, QString state) {
+            mechanismPositions.push_back(pose);
+            mechanismStates.push_back(state);
+        });
+    QObject::connect(&client, &MecanumJogClient::mechanismValidityChanged,
+                     [&](bool valid) { mechanismValidity.push_back(valid); });
+    QObject::connect(&client, &MecanumJogClient::mechanismCompleted,
+                     [&](MechanismPoseData pose) {
+                         mechanismCompletions.push_back(pose);
                      });
 
     client.setConnected(true);
@@ -92,6 +109,62 @@ int main(int argc, char **argv) {
     client.ingestBytes(QByteArrayView("NAV INVALID reason=stopped\r\n"));
     if (!require(navigationValidity.back() == false,
                  "navigation invalidation was not reported")) {
+        return 1;
+    }
+
+    MechanismPoseData mechanismPose;
+    mechanismPose.horizontalDmm = -10;
+    mechanismPose.liftDmm = 20;
+    mechanismPose.turretDdeg = 684;
+    transmitted.clear();
+    if (!require(client.initializeMechanism(mechanismPose) &&
+                     transmitted == QList<QByteArray>({QByteArray(
+                         "mech init -10 20 684\r\n")}),
+                 "mechanism initialization command is incorrect")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "MECH INIT h=-10 l=20 t=684\r\n"
+        "MECH POS h=0 l=100 t=900\r\n"
+        "MECH DONE h=100 l=200 t=1200\r\n"));
+    if (!require(mechanismValidity == QList<bool>({true}) &&
+                     mechanismPositions.size() == 3 &&
+                     mechanismPositions.at(1).liftDmm == 100 &&
+                     mechanismStates ==
+                         QStringList({QStringLiteral("IDLE"),
+                                      QStringLiteral("RUN"),
+                                      QStringLiteral("IDLE")}) &&
+                     mechanismCompletions.size() == 1 &&
+                     mechanismCompletions.front().turretDdeg == 1200,
+                 "structured mechanism replies were not decoded")) {
+        return 1;
+    }
+    mechanismPose.horizontalDmm = 100;
+    mechanismPose.liftDmm = 200;
+    mechanismPose.turretDdeg = 1200;
+    mechanismPose.horizontalRpm = 120;
+    mechanismPose.horizontalAccel = 80;
+    mechanismPose.liftRpm = 90;
+    mechanismPose.liftAccel = 70;
+    mechanismPose.turretDps10 = 150;
+    transmitted.clear();
+    if (!require(client.moveMechanism(mechanismPose) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "mechanism pose did not start the arm handshake")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("mech pose 100 200 1200 120 80 90 70 150\r\n")}),
+                 "mechanism pose command is incorrect")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView("MECH INVALID reason=stopped\r\n"));
+    if (!require(!client.mechanismInitialized() &&
+                     mechanismValidity.back() == false,
+                 "mechanism invalidation was not reported")) {
         return 1;
     }
     lines.clear();
@@ -157,7 +230,7 @@ int main(int argc, char **argv) {
 
     transmitted.clear();
     if (!require(!client.sendCommand(QStringLiteral("arm\r\nW")) &&
-                     !client.sendCommand(QString(24, QLatin1Char('a'))) &&
+                     !client.sendCommand(QString(80, QLatin1Char('a'))) &&
                      !client.sendCommand(QStringLiteral("中文")) &&
                      transmitted.isEmpty(),
                  "invalid or batched text commands reached the UART")) {

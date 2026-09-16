@@ -9,6 +9,12 @@ namespace {
 const QString kArmedReply =
     QStringLiteral("ARMED for one enable or motion command");
 
+bool validMechanismPose(const MechanismPoseData &pose, QString *error) {
+    MechanismSequence sequence;
+    sequence.initial.pose = pose;
+    return validateMechanismSequence(sequence, error);
+}
+
 }  // namespace
 
 MecanumJogClient::MecanumJogClient(QObject *parent) : QObject(parent) {
@@ -39,6 +45,7 @@ void MecanumJogClient::setConnected(bool connected) {
 
     heartbeatTimer_.stop();
     invalidateNavigation();
+    invalidateMechanism();
     if (!pendingCommand_.isEmpty()) {
         failPending(QStringLiteral("连接已断开，授权命令已取消"));
     } else {
@@ -91,7 +98,7 @@ bool MecanumJogClient::sendCommand(QString command) {
         return false;
     }
     if (!validCommand(command)) {
-        emit commandFailed(QStringLiteral("请发送一条 1–23 字节的 ASCII 命令"));
+        emit commandFailed(QStringLiteral("请发送一条 1–79 字节的 ASCII 命令"));
         return false;
     }
     const bool stopping =
@@ -102,6 +109,7 @@ bool MecanumJogClient::sendCommand(QString command) {
         armTimer_.stop();
         pendingCommand_.clear();
         invalidateNavigation();
+        invalidateMechanism();
         emit stopRequested();
     } else if (!pendingCommand_.isEmpty()) {
         emit commandFailed(QStringLiteral("正在等待授权，请稍后发送；停止命令仍可使用"));
@@ -119,7 +127,7 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
         return false;
     }
     if (!validCommand(command)) {
-        emit commandFailed(QStringLiteral("请发送一条 1–23 字节的 ASCII 命令"));
+        emit commandFailed(QStringLiteral("请发送一条 1–79 字节的 ASCII 命令"));
         return false;
     }
     if (!pendingCommand_.isEmpty()) {
@@ -139,6 +147,7 @@ bool MecanumJogClient::emergencyStop() {
     armTimer_.stop();
     pendingCommand_.clear();
     invalidateNavigation();
+    invalidateMechanism();
     emit stopRequested();
     if (!connected_) {
         emit commandFailed(QStringLiteral("串口未连接"));
@@ -180,8 +189,47 @@ bool MecanumJogClient::navigationInitialized() const {
     return navigationInitialized_;
 }
 
+bool MecanumJogClient::initializeMechanism(const MechanismPoseData &pose) {
+    QString error;
+    if (!validMechanismPose(pose, &error)) {
+        emit mechanismError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    return sendCommand(QStringLiteral("mech init %1 %2 %3")
+                           .arg(pose.horizontalDmm)
+                           .arg(pose.liftDmm)
+                           .arg(pose.turretDdeg));
+}
+
+bool MecanumJogClient::moveMechanism(const MechanismPoseData &pose) {
+    QString error;
+    if (!validMechanismPose(pose, &error)) {
+        emit mechanismError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    return sendArmedCommand(QStringLiteral("mech pose %1 %2 %3 %4 %5 %6 %7 %8")
+                                .arg(pose.horizontalDmm)
+                                .arg(pose.liftDmm)
+                                .arg(pose.turretDdeg)
+                                .arg(pose.horizontalRpm)
+                                .arg(pose.horizontalAccel)
+                                .arg(pose.liftRpm)
+                                .arg(pose.liftAccel)
+                                .arg(pose.turretDps10));
+}
+
+bool MecanumJogClient::requestMechanismStatus() {
+    return sendCommand(QStringLiteral("mech status"));
+}
+
+bool MecanumJogClient::mechanismInitialized() const {
+    return mechanismInitialized_;
+}
+
 bool MecanumJogClient::validCommand(const QString &command) const {
-    if (command.isEmpty() || command.size() > 23) {
+    if (command.isEmpty() || command.size() > 79) {
         return false;
     }
     for (const QChar character : command) {
@@ -201,6 +249,8 @@ void MecanumJogClient::handleLine(const QString &line) {
         "state=(IDLE|RUN|TURN) target_x=\\d+ target_y=\\d+$"));
     static const QRegularExpression doneExpression(
         QStringLiteral("^NAV DONE x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
+    static const QRegularExpression mechanismExpression(QStringLiteral(
+        "^MECH (INIT|RUN|POS|DONE) h=(-?\\d+) l=(\\d+) t=(\\d+)$"));
 
     emit lineReceived(line);
     QRegularExpressionMatch match = initExpression.match(line);
@@ -232,6 +282,31 @@ void MecanumJogClient::handleLine(const QString &line) {
         invalidateNavigation();
         return;
     }
+    match = mechanismExpression.match(line);
+    if (match.hasMatch()) {
+        MechanismPoseData pose;
+        pose.horizontalDmm = match.captured(2).toInt();
+        pose.liftDmm = match.captured(3).toInt();
+        pose.turretDdeg = match.captured(4).toInt();
+        const QString event = match.captured(1);
+        if (event == QStringLiteral("INIT") && !mechanismInitialized_) {
+            mechanismInitialized_ = true;
+            emit mechanismValidityChanged(true);
+        }
+        emit mechanismEstimateReceived(
+            pose, event == QStringLiteral("INIT") ||
+                          event == QStringLiteral("DONE")
+                      ? QStringLiteral("IDLE")
+                      : QStringLiteral("RUN"));
+        if (event == QStringLiteral("DONE")) {
+            emit mechanismCompleted(pose);
+        }
+        return;
+    }
+    if (line.startsWith(QStringLiteral("MECH INVALID"))) {
+        invalidateMechanism();
+        return;
+    }
     if (line.startsWith(QStringLiteral("ERR"))) {
         if (line.startsWith(QStringLiteral("ERR NAV:"))) {
             emit navigationError(line);
@@ -239,6 +314,9 @@ void MecanumJogClient::handleLine(const QString &line) {
         if (line.startsWith(QStringLiteral("ERR NAV:")) &&
             line.contains(QStringLiteral("position invalid"))) {
             invalidateNavigation();
+        }
+        if (line.startsWith(QStringLiteral("ERR MECH:"))) {
+            emit mechanismError(line);
         }
         failPending(line);
         return;
@@ -281,13 +359,26 @@ void MecanumJogClient::invalidateNavigation() {
     emit navigationValidityChanged(false);
 }
 
+void MecanumJogClient::invalidateMechanism() {
+    if (!mechanismInitialized_) {
+        return;
+    }
+    mechanismInitialized_ = false;
+    emit mechanismValidityChanged(false);
+}
+
 void MecanumJogClient::failPending(const QString &reason) {
     const bool navigationPending =
         pendingCommand_.startsWith(QStringLiteral("nav goto "));
+    const bool mechanismPending =
+        pendingCommand_.startsWith(QStringLiteral("mech pose "));
     armTimer_.stop();
     pendingCommand_.clear();
     if (navigationPending) {
         emit navigationError(reason);
+    }
+    if (mechanismPending) {
+        emit mechanismError(reason);
     }
     emit commandFailed(reason);
     emit commandStateChanged(QStringLiteral("命令失败：%1").arg(reason));
