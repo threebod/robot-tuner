@@ -1,6 +1,7 @@
 #include "pages/MecanumJogPage.h"
 
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -319,6 +320,17 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                              QStringLiteral("mecanumRouteNextButton"), route);
     auto *routeStatus = button(QStringLiteral("路线状态"),
                                QStringLiteral("mecanumRouteStatusButton"), route);
+    auto *routeLateralScale = new QDoubleSpinBox(route);
+    routeLateralScale->setObjectName(
+        QStringLiteral("mecanumRouteLateralScaleSpin"));
+    routeLateralScale->setRange(50.0, 150.0);
+    routeLateralScale->setDecimals(2);
+    routeLateralScale->setSingleStep(0.1);
+    routeLateralScale->setValue(87.62);
+    routeLateralScale->setSuffix(QStringLiteral(" %"));
+    auto *routeLateralScaleSend = button(
+        QStringLiteral("设置横移比例"),
+        QStringLiteral("mecanumRouteLateralScaleButton"), route);
     auto *help = button(QStringLiteral("帮助"),
                         QStringLiteral("mecanumHelpButton"), route);
     auto *turnDirection = combo(QStringLiteral("mecanumTurnDirectionCombo"),
@@ -338,6 +350,13 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
             });
     bind(routeNext, QStringLiteral("route next"), false);
     bind(routeStatus, QStringLiteral("route status"), false);
+    connect(routeLateralScaleSend, &QPushButton::clicked, this,
+            [this, routeLateralScale] {
+                const int basisPoints = static_cast<int>(
+                    routeLateralScale->value() * 100.0 + 0.5);
+                emit commandRequested(
+                    QStringLiteral("route scale %1").arg(basisPoints));
+            });
     bind(help, QStringLiteral("help"), false);
     connect(turnSend, &QPushButton::clicked, this,
             [this, turnDirection, turnAngle] {
@@ -353,6 +372,9 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLayout->addWidget(routeStart);
     routeLayout->addWidget(routeNext);
     routeLayout->addWidget(routeStatus);
+    routeLayout->addWidget(new QLabel(QStringLiteral("横移比例"), route));
+    routeLayout->addWidget(routeLateralScale);
+    routeLayout->addWidget(routeLateralScaleSend);
     routeLayout->addWidget(turnDirection);
     routeLayout->addWidget(turnAngle);
     routeLayout->addWidget(turnSend);

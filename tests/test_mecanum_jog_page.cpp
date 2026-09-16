@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -54,13 +55,18 @@ int main(int argc, char **argv) {
     auto *routeZone = requiredChild<QComboBox>(&page, "mecanumRouteZoneCombo");
     auto *routeStart = requiredChild<QPushButton>(&page, "mecanumRouteStartButton");
     auto *routeRpm = requiredChild<QSpinBox>(&page, "mecanumRouteRpmSpin");
+    auto *routeScale =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumRouteLateralScaleSpin");
+    auto *routeScaleSend =
+        requiredChild<QPushButton>(&page, "mecanumRouteLateralScaleButton");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
     if (!forward || !lineDistance || !lineRpm || !lineSend || !servoId ||
         !servoAngle || !auxMotorId || !auxMotorDirection ||
         !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
-        !turnDirection || !turnAngle || !turnSend) {
+        !routeScale || !routeScaleSend || !turnDirection || !turnAngle ||
+        !turnSend) {
         return 1;
     }
 
@@ -109,7 +115,10 @@ int main(int argc, char **argv) {
     turnDirection->setCurrentText(QStringLiteral("R"));
     turnAngle->setValue(90);
     turnSend->click();
+    routeScale->setValue(92.50);
+    routeScaleSend->click();
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&
+                     plain.contains(QStringLiteral("route scale 9250")) &&
                      armed.contains(QStringLiteral("route step 2 120")) &&
                      armed.contains(QStringLiteral("route auto 2 120")) &&
                      armed.contains(QStringLiteral("turn R 90")) &&
@@ -135,6 +144,7 @@ int main(int argc, char **argv) {
         QStringLiteral("mecanumStatusButton"),
         QStringLiteral("mecanumRouteNextButton"),
         QStringLiteral("mecanumRouteStatusButton"),
+        QStringLiteral("mecanumRouteLateralScaleButton"),
         QStringLiteral("mecanumHelpButton")};
     for (const QString &name : requiredButtons) {
         if (!require(page.findChild<QPushButton *>(name) != nullptr,
@@ -155,6 +165,7 @@ int main(int argc, char **argv) {
         QStringLiteral("mecanumStatusButton"),
         QStringLiteral("mecanumRouteNextButton"),
         QStringLiteral("mecanumRouteStatusButton"),
+        QStringLiteral("mecanumRouteLateralScaleButton"),
         QStringLiteral("mecanumHelpButton")};
     for (const QString &name : plainButtonNames) {
         page.findChild<QPushButton *>(name)->click();
@@ -181,6 +192,7 @@ int main(int argc, char **argv) {
                                   QStringLiteral("status"),
                                   QStringLiteral("route next"),
                                   QStringLiteral("route status"),
+                                  QStringLiteral("route scale 9250"),
                                   QStringLiteral("help")}) &&
                 armed == QStringList({QStringLiteral("S"),
                                       QStringLiteral("A"),
