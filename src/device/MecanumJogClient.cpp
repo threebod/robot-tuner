@@ -46,6 +46,7 @@ void MecanumJogClient::setConnected(bool connected) {
     heartbeatTimer_.stop();
     invalidateNavigation();
     invalidateMechanism();
+    setFullRouteRunning(false);
     if (!pendingCommand_.isEmpty()) {
         failPending(QStringLiteral("连接已断开，授权命令已取消"));
     } else {
@@ -110,6 +111,7 @@ bool MecanumJogClient::sendCommand(QString command) {
         pendingCommand_.clear();
         invalidateNavigation();
         invalidateMechanism();
+        setFullRouteRunning(false);
         emit stopRequested();
     } else if (!pendingCommand_.isEmpty()) {
         emit commandFailed(QStringLiteral("正在等待授权，请稍后发送；停止命令仍可使用"));
@@ -148,6 +150,7 @@ bool MecanumJogClient::emergencyStop() {
     pendingCommand_.clear();
     invalidateNavigation();
     invalidateMechanism();
+    setFullRouteRunning(false);
     emit stopRequested();
     if (!connected_) {
         emit commandFailed(QStringLiteral("串口未连接"));
@@ -187,6 +190,25 @@ bool MecanumJogClient::navigateTo(qint32 xMm, qint32 yMm, quint16 rpm) {
 
 bool MecanumJogClient::navigationInitialized() const {
     return navigationInitialized_;
+}
+
+bool MecanumJogClient::startFullRoute(int startZone, quint16 rpm) {
+    if ((startZone != 1 && startZone != 2) || rpm < 10 || rpm > 120) {
+        const QString error = QStringLiteral("完整跑图要求启停区1/2、速度10～120 RPM");
+        emit fullRouteError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    if (!sendArmedCommand(
+            QStringLiteral("route auto %1 %2").arg(startZone).arg(rpm))) {
+        return false;
+    }
+    setFullRouteRunning(true);
+    return true;
+}
+
+bool MecanumJogClient::fullRouteRunning() const {
+    return fullRouteRunning_;
 }
 
 bool MecanumJogClient::initializeMechanism(const MechanismPoseData &pose) {
@@ -251,6 +273,13 @@ void MecanumJogClient::handleLine(const QString &line) {
         QStringLiteral("^NAV DONE x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
     static const QRegularExpression mechanismExpression(QStringLiteral(
         "^MECH (INIT|RUN|POS|DONE) h=(-?\\d+) l=(\\d+) t=(\\d+)$"));
+    static const QRegularExpression routePositionExpression(QStringLiteral(
+        "^ROUTE POS x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+) "
+        "state=(RUN|TURN) stage=([A-Z0-9_]+) target_x=(\\d+) target_y=(\\d+)$"));
+    static const QRegularExpression routeStageExpression(
+        QStringLiteral("^ROUTE STAGE index=(\\d+) name=([A-Z0-9_]+)$"));
+    static const QRegularExpression routeDoneExpression(
+        QStringLiteral("^ROUTE DONE x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
 
     emit lineReceived(line);
     QRegularExpressionMatch match = initExpression.match(line);
@@ -307,6 +336,34 @@ void MecanumJogClient::handleLine(const QString &line) {
         invalidateMechanism();
         return;
     }
+    match = routePositionExpression.match(line);
+    if (match.hasMatch()) {
+        setFullRouteRunning(true);
+        emit fullRouteEstimateReceived(
+            match.captured(1).toInt(), match.captured(2).toInt(),
+            match.captured(3).toDouble() / 100.0, match.captured(4),
+            match.captured(5), match.captured(6).toInt(),
+            match.captured(7).toInt());
+        return;
+    }
+    match = routeStageExpression.match(line);
+    if (match.hasMatch()) {
+        emit fullRouteStageChanged(match.captured(1).toInt(),
+                                   match.captured(2));
+        return;
+    }
+    match = routeDoneExpression.match(line);
+    if (match.hasMatch()) {
+        setFullRouteRunning(false);
+        emit fullRouteCompleted(match.captured(1).toInt(),
+                                match.captured(2).toInt());
+        return;
+    }
+    if (line.startsWith(QStringLiteral("ROUTE INVALID"))) {
+        setFullRouteRunning(false);
+        emit fullRouteError(line);
+        return;
+    }
     if (line.startsWith(QStringLiteral("ERR"))) {
         if (line.startsWith(QStringLiteral("ERR NAV:"))) {
             emit navigationError(line);
@@ -318,6 +375,10 @@ void MecanumJogClient::handleLine(const QString &line) {
         if (line.startsWith(QStringLiteral("ERR MECH:"))) {
             emit mechanismError(line);
         }
+        if (line.startsWith(QStringLiteral("ERR ROUTE:"))) {
+            setFullRouteRunning(false);
+            emit fullRouteError(line);
+        }
         failPending(line);
         return;
     }
@@ -327,6 +388,7 @@ void MecanumJogClient::handleLine(const QString &line) {
         pendingCommand_.clear();
         invalidateNavigation();
         invalidateMechanism();
+        setFullRouteRunning(false);
         emit stopRequested();
         emit commandStateChanged(QStringLiteral("设备已停止：%1").arg(line));
         return;
@@ -369,11 +431,19 @@ void MecanumJogClient::invalidateMechanism() {
     emit mechanismValidityChanged(false);
 }
 
+void MecanumJogClient::setFullRouteRunning(bool running) {
+    if (fullRouteRunning_ == running) return;
+    fullRouteRunning_ = running;
+    emit fullRouteRunningChanged(running);
+}
+
 void MecanumJogClient::failPending(const QString &reason) {
     const bool navigationPending =
         pendingCommand_.startsWith(QStringLiteral("nav goto "));
     const bool mechanismPending =
         pendingCommand_.startsWith(QStringLiteral("mech pose "));
+    const bool fullRoutePending =
+        pendingCommand_.startsWith(QStringLiteral("route auto "));
     armTimer_.stop();
     pendingCommand_.clear();
     if (navigationPending) {
@@ -381,6 +451,10 @@ void MecanumJogClient::failPending(const QString &reason) {
     }
     if (mechanismPending) {
         emit mechanismError(reason);
+    }
+    if (fullRoutePending) {
+        setFullRouteRunning(false);
+        emit fullRouteError(reason);
     }
     emit commandFailed(reason);
     emit commandStateChanged(QStringLiteral("命令失败：%1").arg(reason));

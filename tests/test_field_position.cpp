@@ -1,9 +1,11 @@
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
 #include <QGroupBox>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSplitter>
@@ -27,6 +29,18 @@ bool require(bool condition, const char *message) {
 
 bool near(double actual, double expected) {
     return std::abs(actual - expected) < 1e-9;
+}
+
+void acceptNextConfirmation() {
+    QTimer::singleShot(0, [] {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            if (auto *yesButton = box->button(QMessageBox::Yes)) {
+                yesButton->click();
+            } else {
+                box->done(QMessageBox::Yes);
+            }
+        }
+    });
 }
 
 }  // namespace
@@ -87,13 +101,24 @@ int main(int argc, char **argv) {
     auto *navRpm = page.findChild<QSpinBox *>("navigationRpmSpin");
     auto *navTarget = page.findChild<QLabel *>("navigationTargetLabel");
     auto *navState = page.findChild<QLabel *>("navigationStateLabel");
+    auto *coordinateX = page.findChild<QSpinBox *>("coordinateXSpin");
+    auto *coordinateY = page.findChild<QSpinBox *>("coordinateYSpin");
+    auto *coordinateRpm = page.findChild<QSpinBox *>("coordinateRpmSpin");
+    auto *coordinateMove = page.findChild<QPushButton *>("coordinateMoveButton");
+    auto *fullRouteZone = page.findChild<QComboBox *>("fullRouteZoneCombo");
+    auto *fullRouteRpm = page.findChild<QSpinBox *>("fullRouteRpmSpin");
+    auto *fullRouteStart = page.findChild<QPushButton *>("fullRouteStartButton");
+    auto *fullRouteStatus = page.findChild<QLabel *>("fullRouteStatusLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
                      source && status && updated && map && simulation->isChecked() &&
                      splitter && splitter->orientation() == Qt::Vertical &&
                      serialPanel && steering && steeringStatus && connection &&
                      emergency && errorCode && poseControls &&
                      navigationControls && navInit1 && navMove && navRpm && navTarget &&
-                     navState && navigationControls->isHidden(),
+                     navState && coordinateX && coordinateY && coordinateRpm &&
+                     coordinateMove && fullRouteZone && fullRouteRpm &&
+                     fullRouteStart && fullRouteStatus &&
+                     navigationControls->isHidden(),
                  "field position page controls are incomplete")) {
         return 1;
     }
@@ -187,12 +212,19 @@ int main(int argc, char **argv) {
     int initializedZone = 0;
     QPointF requestedTarget;
     quint16 requestedRpm = 0;
+    int fullRouteZoneRequested = 0;
+    quint16 fullRouteRpmRequested = 0;
     QObject::connect(&page, &FieldPositionPage::navigationInitRequested,
                      [&](int zone) { initializedZone = zone; });
     QObject::connect(&page, &FieldPositionPage::navigationTargetRequested,
                      [&](qint32 targetX, qint32 targetY, quint16 rpm) {
                          requestedTarget = QPointF(targetX, targetY);
                          requestedRpm = rpm;
+                     });
+    QObject::connect(&page, &FieldPositionPage::fullRouteRequested,
+                     [&](int zone, quint16 rpm) {
+                         fullRouteZoneRequested = zone;
+                         fullRouteRpmRequested = rpm;
                      });
     page.setNavigationMode(true);
     page.setNavigationConnected(true);
@@ -230,6 +262,40 @@ int main(int argc, char **argv) {
         return 1;
     }
     page.setNavigationEstimate(1200, 2080, 90.0, QStringLiteral("IDLE"));
+    coordinateX->setValue(300);
+    coordinateY->setValue(300);
+    coordinateRpm->setValue(90);
+    coordinateMove->click();
+    if (!require(requestedTarget == QPointF(300, 300) && requestedRpm == 90 &&
+                     map->targetFieldPosition() == QPointF(300, 300),
+                 "coordinate controls did not emit the exact target")) {
+        return 1;
+    }
+    page.setNavigationEstimate(300, 300, 0.0, QStringLiteral("IDLE"));
+    fullRouteZone->setCurrentIndex(1);
+    fullRouteRpm->setValue(100);
+    acceptNextConfirmation();
+    fullRouteStart->click();
+    if (!require(fullRouteZoneRequested == 2 && fullRouteRpmRequested == 100 &&
+                     !coordinateMove->isEnabled() && !fullRouteStart->isEnabled(),
+                 "full route controls did not emit or gate the request")) {
+        return 1;
+    }
+    page.setFullRouteEstimate(2100, 1200, 180.0, QStringLiteral("RUN"),
+                              QStringLiteral("QR"), 2250, 1200);
+    page.setFullRouteStage(2, QStringLiteral("RAW_1"));
+    if (!require(map->displayedFieldPosition() == QPointF(2100, 1200) &&
+                     map->targetFieldPosition() == QPointF(2250, 1200) &&
+                     fullRouteStatus->text().contains(QStringLiteral("原料区")),
+                 "full route estimate or stage was not displayed")) {
+        return 1;
+    }
+    page.setFullRouteCompleted(2250, 150);
+    if (!require(fullRouteStart->isEnabled() &&
+                     fullRouteStatus->text().contains(QStringLiteral("完成")),
+                 "full route completion did not restore controls")) {
+        return 1;
+    }
     page.setNavigationInitialized(false);
     if (!require(!navMove->isEnabled() &&
                      navState->text().contains(QStringLiteral("重新初始化")) &&

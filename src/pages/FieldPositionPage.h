@@ -8,6 +8,7 @@
 #include "device/TelemetryTypes.h"
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
@@ -65,6 +66,13 @@ public:
     void setNavigationEstimate(qint32 xMm, qint32 yMm, double yawDegrees,
                                const QString &state);
     void setNavigationError(const QString &message);
+    void setFullRouteRunning(bool running);
+    void setFullRouteEstimate(qint32 xMm, qint32 yMm, double yawDegrees,
+                              const QString &state, const QString &stage,
+                              qint32 targetX, qint32 targetY);
+    void setFullRouteStage(int index, const QString &stage);
+    void setFullRouteCompleted(qint32 xMm, qint32 yMm);
+    void setFullRouteError(const QString &message);
 
 public slots:
     void selectFieldPoint(QPointF fieldPoint);
@@ -74,6 +82,7 @@ signals:
     void rawSendRequested(QByteArray bytes);
     void navigationInitRequested(int startZone);
     void navigationTargetRequested(qint32 xMm, qint32 yMm, quint16 rpm);
+    void fullRouteRequested(int startZone, quint16 rpm);
 
 private:
     void applyInputPose();
@@ -105,6 +114,14 @@ private:
     QLabel *navigationStateLabel_{};
     QPushButton *navigationMoveButton_{};
     QSpinBox *navigationRpmSpin_{};
+    QSpinBox *coordinateXSpin_{};
+    QSpinBox *coordinateYSpin_{};
+    QSpinBox *coordinateRpmSpin_{};
+    QPushButton *coordinateMoveButton_{};
+    QComboBox *fullRouteZoneCombo_{};
+    QSpinBox *fullRouteRpmSpin_{};
+    QPushButton *fullRouteStartButton_{};
+    QLabel *fullRouteStatusLabel_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;
@@ -115,6 +132,7 @@ private:
     bool navigationConnected_{};
     bool navigationInitialized_{};
     bool navigationRunning_{};
+    bool fullRouteRunning_{};
     bool navigationTargetValid_{};
     QPointF navigationTarget_;
 };

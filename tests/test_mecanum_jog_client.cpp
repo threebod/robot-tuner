@@ -40,6 +40,10 @@ int main(int argc, char **argv) {
     QStringList mechanismStates;
     QList<bool> mechanismValidity;
     QList<MechanismPoseData> mechanismCompletions;
+    QStringList fullRouteStages;
+    QList<bool> fullRouteRunning;
+    QList<QPointF> fullRoutePositions;
+    QList<QPointF> fullRouteCompletions;
     QObject::connect(&client, &MecanumJogClient::bytesReady,
                      [&](QByteArray bytes) { transmitted.push_back(bytes); });
     QObject::connect(&client, &MecanumJogClient::lineReceived,
@@ -70,6 +74,22 @@ int main(int argc, char **argv) {
     QObject::connect(&client, &MecanumJogClient::mechanismCompleted,
                      [&](MechanismPoseData pose) {
                          mechanismCompletions.push_back(pose);
+                     });
+    QObject::connect(&client, &MecanumJogClient::fullRouteRunningChanged,
+                     [&](bool running) { fullRouteRunning.push_back(running); });
+    QObject::connect(&client, &MecanumJogClient::fullRouteStageChanged,
+                     [&](int index, QString stage) {
+                         fullRouteStages.push_back(
+                             QStringLiteral("%1:%2").arg(index).arg(stage));
+                     });
+    QObject::connect(
+        &client, &MecanumJogClient::fullRouteEstimateReceived,
+        [&](qint32 x, qint32 y, double, QString, QString, qint32, qint32) {
+            fullRoutePositions.push_back(QPointF(x, y));
+        });
+    QObject::connect(&client, &MecanumJogClient::fullRouteCompleted,
+                     [&](qint32 x, qint32 y) {
+                         fullRouteCompletions.push_back(QPointF(x, y));
                      });
 
     client.setConnected(true);
@@ -165,6 +185,28 @@ int main(int argc, char **argv) {
     if (!require(!client.mechanismInitialized() &&
                      mechanismValidity.back() == false,
                  "mechanism invalidation was not reported")) {
+        return 1;
+    }
+
+    transmitted.clear();
+    if (!require(client.startFullRoute(2, 90) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "full route did not start the arm handshake")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"
+        "ROUTE POS x=2100 y=150 yaw_cdeg=9000 state=RUN stage=TRANSIT target_x=2100 target_y=1200\r\n"
+        "ROUTE STAGE index=2 name=QR\r\n"
+        "ROUTE DONE x=2250 y=150 yaw_cdeg=9000\r\n"));
+    if (!require(transmitted ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("route auto 2 90\r\n")}) &&
+                     fullRouteRunning == QList<bool>({true, false}) &&
+                     fullRoutePositions == QList<QPointF>({QPointF(2100, 150)}) &&
+                     fullRouteStages == QStringList({QStringLiteral("2:QR")}) &&
+                     fullRouteCompletions == QList<QPointF>({QPointF(2250, 150)}),
+                 "structured full-route replies were not decoded")) {
         return 1;
     }
     lines.clear();

@@ -1,6 +1,7 @@
 #include "pages/FieldPositionPage.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -8,8 +9,10 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
@@ -27,6 +30,18 @@ constexpr double kFieldSizeMm = 2400.0;
 const QPointF kNavigationPoints[] = {
     {2250, 2250}, {2100, 2250}, {2100, 2080}, {2100, 1200}, {2250, 150},
     {2100, 150},  {1200, 2080}, {1200, 1200}, {1200, 400},  {400, 1200}};
+
+QString routeStageText(const QString &stage) {
+    if (stage == QStringLiteral("QR")) return QStringLiteral("二维码区");
+    if (stage == QStringLiteral("RAW_1")) return QStringLiteral("原料区（第一轮）");
+    if (stage == QStringLiteral("COARSE_1")) return QStringLiteral("粗加工区（第一轮）");
+    if (stage == QStringLiteral("TEMP_1")) return QStringLiteral("暂存区（第一轮）");
+    if (stage == QStringLiteral("RAW_2")) return QStringLiteral("原料区（第二轮）");
+    if (stage == QStringLiteral("COARSE_2")) return QStringLiteral("粗加工区（第二轮）");
+    if (stage == QStringLiteral("TEMP_2")) return QStringLiteral("暂存区（第二轮）");
+    if (stage == QStringLiteral("HOME")) return QStringLiteral("返回启停区");
+    return QStringLiteral("通道行驶");
+}
 
 void drawFieldLabel(QPainter *painter, const QRectF &fieldRect,
                     QPointF fieldPoint, const QString &text) {
@@ -179,7 +194,8 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     map_ = new FieldMapWidget(topWidget);
     topLayout->addWidget(map_, 1);
 
-    auto *panel = new QVBoxLayout;
+    auto *panelWidget = new QWidget(topWidget);
+    auto *panel = new QVBoxLayout(panelWidget);
     auto *title = new QLabel(QStringLiteral("场地位置与导航"), topWidget);
     QFont titleFont = title->font();
     titleFont.setPointSize(titleFont.pointSize() + 3);
@@ -275,6 +291,58 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     navigationLayout->addWidget(navigationStateLabel_);
     navigationLayout->addWidget(navigationRpmSpin_);
     navigationLayout->addWidget(navigationMoveButton_);
+
+    auto *coordinateGroup = new QGroupBox(QStringLiteral("指定坐标移动"),
+                                           navigationControlGroup_);
+    auto *coordinateLayout = new QFormLayout(coordinateGroup);
+    coordinateXSpin_ = new QSpinBox(coordinateGroup);
+    coordinateXSpin_->setObjectName(QStringLiteral("coordinateXSpin"));
+    coordinateYSpin_ = new QSpinBox(coordinateGroup);
+    coordinateYSpin_->setObjectName(QStringLiteral("coordinateYSpin"));
+    for (QSpinBox *coordinate : {coordinateXSpin_, coordinateYSpin_}) {
+        coordinate->setRange(0, 2400);
+        coordinate->setSingleStep(100);
+        coordinate->setSuffix(QStringLiteral(" mm"));
+    }
+    coordinateRpmSpin_ = new QSpinBox(coordinateGroup);
+    coordinateRpmSpin_->setObjectName(QStringLiteral("coordinateRpmSpin"));
+    coordinateRpmSpin_->setRange(10, 120);
+    coordinateRpmSpin_->setSingleStep(10);
+    coordinateRpmSpin_->setValue(60);
+    coordinateRpmSpin_->setSuffix(QStringLiteral(" RPM"));
+    coordinateMoveButton_ = new QPushButton(QStringLiteral("移动到指定坐标"),
+                                             coordinateGroup);
+    coordinateMoveButton_->setObjectName(QStringLiteral("coordinateMoveButton"));
+    coordinateLayout->addRow(QStringLiteral("X"), coordinateXSpin_);
+    coordinateLayout->addRow(QStringLiteral("Y"), coordinateYSpin_);
+    coordinateLayout->addRow(QStringLiteral("速度"), coordinateRpmSpin_);
+    coordinateLayout->addRow(coordinateMoveButton_);
+    navigationLayout->addWidget(coordinateGroup);
+
+    auto *fullRouteGroup = new QGroupBox(QStringLiteral("完整跑图（仅底盘）"),
+                                          navigationControlGroup_);
+    auto *fullRouteLayout = new QFormLayout(fullRouteGroup);
+    fullRouteZoneCombo_ = new QComboBox(fullRouteGroup);
+    fullRouteZoneCombo_->setObjectName(QStringLiteral("fullRouteZoneCombo"));
+    fullRouteZoneCombo_->addItem(QStringLiteral("启停区 1"), 1);
+    fullRouteZoneCombo_->addItem(QStringLiteral("启停区 2"), 2);
+    fullRouteRpmSpin_ = new QSpinBox(fullRouteGroup);
+    fullRouteRpmSpin_->setObjectName(QStringLiteral("fullRouteRpmSpin"));
+    fullRouteRpmSpin_->setRange(10, 120);
+    fullRouteRpmSpin_->setSingleStep(10);
+    fullRouteRpmSpin_->setValue(60);
+    fullRouteRpmSpin_->setSuffix(QStringLiteral(" RPM"));
+    fullRouteStartButton_ = new QPushButton(QStringLiteral("开始完整跑图"),
+                                            fullRouteGroup);
+    fullRouteStartButton_->setObjectName(QStringLiteral("fullRouteStartButton"));
+    fullRouteStatusLabel_ = new QLabel(QStringLiteral("状态：待命"), fullRouteGroup);
+    fullRouteStatusLabel_->setObjectName(QStringLiteral("fullRouteStatusLabel"));
+    fullRouteStatusLabel_->setWordWrap(true);
+    fullRouteLayout->addRow(QStringLiteral("起点"), fullRouteZoneCombo_);
+    fullRouteLayout->addRow(QStringLiteral("速度"), fullRouteRpmSpin_);
+    fullRouteLayout->addRow(fullRouteStartButton_);
+    fullRouteLayout->addRow(fullRouteStatusLabel_);
+    navigationLayout->addWidget(fullRouteGroup);
     navigationControlGroup_->hide();
     panel->addWidget(navigationControlGroup_);
 
@@ -316,7 +384,13 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     monitorForm->addRow(QStringLiteral("设备错误码"), errorCodeLabel_);
     panel->addWidget(monitorGroup);
     panel->addStretch();
-    topLayout->addLayout(panel);
+    auto *panelScroll = new QScrollArea(topWidget);
+    panelScroll->setObjectName(QStringLiteral("fieldControlScroll"));
+    panelScroll->setWidgetResizable(true);
+    panelScroll->setFrameShape(QFrame::NoFrame);
+    panelScroll->setMinimumWidth(430);
+    panelScroll->setWidget(panelWidget);
+    topLayout->addWidget(panelScroll);
 
     serialPanel_ = new SerialDebugPanel(QStringLiteral("fieldSerial"), splitter);
     serialPanel_->setObjectName(QStringLiteral("fieldSerialPanel"));
@@ -357,6 +431,38 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
             static_cast<qint32>(navigationTarget_.x()),
             static_cast<qint32>(navigationTarget_.y()),
             static_cast<quint16>(navigationRpmSpin_->value()));
+    });
+    connect(coordinateMoveButton_, &QPushButton::clicked, this, [this] {
+        navigationTarget_ = QPointF(coordinateXSpin_->value(),
+                                    coordinateYSpin_->value());
+        navigationTargetValid_ = true;
+        navigationRunning_ = true;
+        navigationTargetLabel_->setText(
+            QStringLiteral("目标：x=%1 mm，y=%2 mm（指定坐标）")
+                .arg(coordinateXSpin_->value())
+                .arg(coordinateYSpin_->value()));
+        map_->setTargetPoint(navigationTarget_, true);
+        refreshNavigationControls();
+        emit navigationTargetRequested(coordinateXSpin_->value(),
+                                       coordinateYSpin_->value(),
+                                       static_cast<quint16>(coordinateRpmSpin_->value()));
+    });
+    connect(fullRouteStartButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(
+                this, QStringLiteral("确认完整跑图"),
+                QStringLiteral("请确认底盘已架空或场地通道已清空，急停和心跳已验证。\n"
+                               "本流程只控制底盘，不执行视觉或机械动作。"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
+            QMessageBox::Yes) {
+            return;
+        }
+        fullRouteRunning_ = true;
+        navigationRunning_ = false;
+        navigationInitialized_ = false;
+        fullRouteStatusLabel_->setText(QStringLiteral("状态：等待路线启动"));
+        refreshNavigationControls();
+        emit fullRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
+                                static_cast<quint16>(fullRouteRpmSpin_->value()));
     });
     connect(serialPanel_, &SerialDebugPanel::rawSendRequested, this,
             &FieldPositionPage::rawSendRequested);
@@ -446,9 +552,10 @@ void FieldPositionPage::setNavigationMode(bool enabled) {
     map_->setTargetPoint({}, false);
     navigationTargetValid_ = false;
     navigationRunning_ = false;
+    fullRouteRunning_ = false;
     noticeLabel_->setText(
         enabled
-            ? QStringLiteral("仅沿预定义安全航点移动；位置来自命令积分估计，不是真实定位。")
+            ? QStringLiteral("指定坐标仅沿静态安全通道移动；障碍或净空不足会被拒绝。位置来自命令积分估计，不是真实定位。")
             : QStringLiteral("调试显示用途；现场布置可能偏离名义尺寸，不用于导航控制。"));
     capabilityLabel_->setText(
         enabled ? QStringLiteral("定位方式：命令积分估计（非真实定位）")
@@ -460,6 +567,7 @@ void FieldPositionPage::setNavigationMode(bool enabled) {
 void FieldPositionPage::setNavigationConnected(bool connected) {
     navigationConnected_ = connected;
     if (!connected) {
+        fullRouteRunning_ = false;
         setNavigationInitialized(false);
     }
     refreshNavigationControls();
@@ -518,11 +626,74 @@ void FieldPositionPage::setNavigationError(const QString &message) {
     refreshNavigationControls();
 }
 
+void FieldPositionPage::setFullRouteRunning(bool running) {
+    fullRouteRunning_ = running;
+    if (!running && fullRouteStatusLabel_->text().contains(QStringLiteral("运行"))) {
+        fullRouteStatusLabel_->setText(QStringLiteral("状态：已停止"));
+    }
+    refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setFullRouteEstimate(qint32 xMm, qint32 yMm,
+                                              double yawDegrees,
+                                              const QString &state,
+                                              const QString &stage,
+                                              qint32 targetX,
+                                              qint32 targetY) {
+    PoseSample sample;
+    sample.timestampMs = static_cast<quint32>(
+        QDateTime::currentMSecsSinceEpoch() & 0xffffffff);
+    sample.xMm = xMm;
+    sample.yMm = yMm;
+    sample.yawDegrees = yawDegrees;
+    setPoseSample(sample, QStringLiteral("完整跑图估计（非真实定位）"));
+    steeringAngleLabel_->setText(
+        QStringLiteral("%1°").arg(yawDegrees, 0, 'f', 2));
+    lastImuUpdate_.restart();
+    map_->setTargetPoint(QPointF(targetX, targetY), true);
+    fullRouteStatusLabel_->setText(
+        QStringLiteral("状态：%1，%2").arg(routeStageText(stage),
+                                           state == QStringLiteral("TURN")
+                                               ? QStringLiteral("转向中")
+                                               : QStringLiteral("移动中")));
+    fullRouteRunning_ = true;
+    refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setFullRouteStage(int index, const QString &stage) {
+    fullRouteStatusLabel_->setText(
+        QStringLiteral("状态：第 %1 阶段，%2").arg(index).arg(routeStageText(stage)));
+}
+
+void FieldPositionPage::setFullRouteCompleted(qint32 xMm, qint32 yMm) {
+    fullRouteRunning_ = false;
+    map_->setTargetPoint(QPointF(xMm, yMm), true);
+    fullRouteStatusLabel_->setText(
+        QStringLiteral("状态：完整跑图完成（x=%1 mm，y=%2 mm）").arg(xMm).arg(yMm));
+    refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setFullRouteError(const QString &message) {
+    fullRouteRunning_ = false;
+    fullRouteStatusLabel_->setText(QStringLiteral("状态：错误：%1").arg(message));
+    refreshStatus();
+    refreshNavigationControls();
+}
+
 void FieldPositionPage::refreshNavigationControls() {
     navigationControlGroup_->setEnabled(navigationConnected_);
     navigationMoveButton_->setEnabled(
         navigationMode_ && navigationConnected_ && navigationInitialized_ &&
-        navigationTargetValid_ && !navigationRunning_);
+        navigationTargetValid_ && !navigationRunning_ && !fullRouteRunning_);
+    coordinateMoveButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && navigationInitialized_ &&
+        !navigationRunning_ && !fullRouteRunning_);
+    fullRouteStartButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && !navigationRunning_ &&
+        !fullRouteRunning_);
 }
 
 QPointF FieldPositionPage::nearestNavigationPoint(QPointF fieldPoint) const {
@@ -582,22 +753,23 @@ void FieldPositionPage::applyPreset(qint32 xMm, qint32 yMm) {
 
 void FieldPositionPage::refreshStatus() {
     if (navigationMode_) {
-        const bool stale = navigationRunning_ &&
+        const bool moving = navigationRunning_ || fullRouteRunning_;
+        const bool stale = moving &&
                            (!lastUpdate_.isValid() || lastUpdate_.elapsed() > 1000);
-        const bool imuStale = navigationRunning_ &&
+        const bool imuStale = moving &&
                               (!lastImuUpdate_.isValid() ||
                                lastImuUpdate_.elapsed() > 1000);
         steeringStatusLabel_->setText(
             imuStale ? QStringLiteral("导航航向超时")
-                     : !navigationInitialized_
+                     : !navigationInitialized_ && !fullRouteRunning_
                            ? QStringLiteral("等待导航初始化")
-                           : navigationRunning_
+                           : moving
                                  ? QStringLiteral("正常")
                                  : QStringLiteral("随导航状态更新"));
         steeringStatusLabel_->setStyleSheet(
             imuStale ? QStringLiteral("color: #b91c1c; font-weight: bold;")
                      : QString());
-        if (!navigationInitialized_) {
+        if (!navigationInitialized_ && !fullRouteRunning_) {
             statusLabel_->setText(QStringLiteral("状态：位置无效，请先初始化"));
             statusLabel_->setStyleSheet(
                 QStringLiteral("color: #b91c1c; font-weight: bold;"));
@@ -607,7 +779,7 @@ void FieldPositionPage::refreshStatus() {
                 QStringLiteral("color: #b91c1c; font-weight: bold;"));
         } else {
             statusLabel_->setText(
-                navigationRunning_ ? QStringLiteral("状态：移动中（估计位置）")
+                moving ? QStringLiteral("状态：移动中（估计位置）")
                                    : QStringLiteral("状态：已初始化（估计位置）"));
             statusLabel_->setStyleSheet({});
         }

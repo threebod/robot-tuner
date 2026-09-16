@@ -971,6 +971,18 @@ int main(int argc, char **argv) {
         textWindow.findChild<QPushButton *>("navigationInit1Button");
     auto *textNavMove =
         textWindow.findChild<QPushButton *>("navigationMoveButton");
+    auto *textCoordinateX = textWindow.findChild<QSpinBox *>("coordinateXSpin");
+    auto *textCoordinateY = textWindow.findChild<QSpinBox *>("coordinateYSpin");
+    auto *textCoordinateRpm = textWindow.findChild<QSpinBox *>("coordinateRpmSpin");
+    auto *textCoordinateMove =
+        textWindow.findChild<QPushButton *>("coordinateMoveButton");
+    auto *textFullRouteZone =
+        textWindow.findChild<QComboBox *>("fullRouteZoneCombo");
+    auto *textFullRouteRpm = textWindow.findChild<QSpinBox *>("fullRouteRpmSpin");
+    auto *textFullRouteStart =
+        textWindow.findChild<QPushButton *>("fullRouteStartButton");
+    auto *textFullRouteStatus =
+        textWindow.findChild<QLabel *>("fullRouteStatusLabel");
     auto *textTerminal = textWindow.findChild<TerminalPage *>("串口终端");
     auto *textTerminalLog =
         textWindow.findChild<QPlainTextEdit *>("terminalLogTextEdit");
@@ -1006,7 +1018,9 @@ int main(int argc, char **argv) {
         !require(textPage->isEnabled() && textActionRecorder &&
                      textActionRecorder->isEnabled() && textField->isEnabled() &&
                      !textNavControls->isHidden() && !textLegacyPage->isEnabled() &&
-                     !textClear->isEnabled(),
+                     !textClear->isEnabled() && textCoordinateX && textCoordinateY &&
+                     textCoordinateRpm && textCoordinateMove && textFullRouteZone &&
+                     textFullRouteRpm && textFullRouteStart && textFullRouteStatus,
                  "text mode page enablement is incorrect")) {
         return 1;
     }
@@ -1023,6 +1037,44 @@ int main(int argc, char **argv) {
                                         QByteArray("arm\r\n"),
                                         QByteArray("nav goto 1200 2080 60\r\n")}),
                  "map navigation UI is not wired to the text client")) {
+        return 1;
+    }
+    textClient->ingestBytes(QByteArrayView(
+        "NAV DONE x=1200 y=2080 yaw_cdeg=9000\r\n"));
+    textWrites.clear();
+    textCoordinateX->setValue(300);
+    textCoordinateY->setValue(300);
+    textCoordinateRpm->setValue(90);
+    textCoordinateMove->click();
+    textClient->ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(textWrites ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("nav goto 300 300 90\r\n")}),
+                 "coordinate navigation UI is not wired to the text client")) {
+        return 1;
+    }
+    textClient->ingestBytes(QByteArrayView(
+        "NAV DONE x=300 y=300 yaw_cdeg=0\r\n"));
+    textWrites.clear();
+    textFullRouteZone->setCurrentIndex(1);
+    textFullRouteRpm->setValue(100);
+    acceptNextConfirmation();
+    textFullRouteStart->click();
+    textClient->ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(textWrites ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("route auto 2 100\r\n")}),
+                 "full route UI is not wired to the text client")) {
+        return 1;
+    }
+    textClient->ingestBytes(QByteArrayView(
+        "ROUTE POS x=2100 y=150 yaw_cdeg=9000 state=RUN stage=TRANSIT target_x=2100 target_y=1200\r\n"
+        "ROUTE STAGE index=1 name=QR\r\n"
+        "ROUTE DONE x=2250 y=150 yaw_cdeg=9000\r\n"));
+    if (!require(textFullRouteStatus->text().contains(QStringLiteral("完成")),
+                 "full route status was not displayed on the field page")) {
         return 1;
     }
     textTerminalClear->click();

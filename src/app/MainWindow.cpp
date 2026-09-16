@@ -253,6 +253,18 @@ MainWindow::MainWindow(QWidget *parent)
             &mecanum_, &MecanumJogClient::initializeNavigation);
     connect(fieldPositionPage_, &FieldPositionPage::navigationTargetRequested,
             &mecanum_, &MecanumJogClient::navigateTo);
+    connect(fieldPositionPage_, &FieldPositionPage::fullRouteRequested,
+            &mecanum_, &MecanumJogClient::startFullRoute);
+    connect(&mecanum_, &MecanumJogClient::fullRouteRunningChanged,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteRunning);
+    connect(&mecanum_, &MecanumJogClient::fullRouteEstimateReceived,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteEstimate);
+    connect(&mecanum_, &MecanumJogClient::fullRouteStageChanged,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteStage);
+    connect(&mecanum_, &MecanumJogClient::fullRouteCompleted,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteCompleted);
+    connect(&mecanum_, &MecanumJogClient::fullRouteError,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteError);
     connect(mecanumPage_, &MecanumJogPage::commandRequested, &mecanum_,
             &MecanumJogClient::sendCommand);
     connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
