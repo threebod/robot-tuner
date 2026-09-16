@@ -69,6 +69,7 @@ int main(int argc, char **argv) {
     auto *yaw = page.findChild<QDoubleSpinBox *>("poseYawSpinBox");
     auto *source = page.findChild<QLabel *>("poseSourceLabel");
     auto *status = page.findChild<QLabel *>("poseStatusLabel");
+    auto *updated = page.findChild<QLabel *>("poseUpdatedLabel");
     auto *map = page.findChild<FieldMapWidget *>("fieldMapWidget");
     auto *splitter = page.findChild<QSplitter *>("fieldMonitorSplitter");
     auto *serialPanel =
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
     auto *navTarget = page.findChild<QLabel *>("navigationTargetLabel");
     auto *navState = page.findChild<QLabel *>("navigationStateLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
-                     source && status && map && simulation->isChecked() &&
+                     source && status && updated && map && simulation->isChecked() &&
                      splitter && splitter->orientation() == Qt::Vertical &&
                      serialPanel && steering && steeringStatus && connection &&
                      emergency && errorCode && poseControls &&
@@ -220,6 +221,7 @@ int main(int argc, char **argv) {
     if (!require(map->displayedFieldPosition() == QPointF(2100, 2200) &&
                      navState->text().contains(QStringLiteral("移动中")) &&
                      source->text().contains(QStringLiteral("估计")) &&
+                     updated->text().contains(QStringLiteral("上位机接收时间")) &&
                      !navMove->isEnabled(),
                  "live navigation estimate was not displayed or gated")) {
         return 1;

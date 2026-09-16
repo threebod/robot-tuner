@@ -485,6 +485,10 @@ void FieldPositionPage::setNavigationEstimate(qint32 xMm, qint32 yMm,
     navigationRunning_ = state == QStringLiteral("RUN") ||
                          state == QStringLiteral("TURN");
     setPoseSample(sample, QStringLiteral("地图导航估计（非真实定位）"));
+    updatedLabel_->setText(
+        QStringLiteral("更新时间：%1（上位机接收时间）")
+            .arg(QDateTime::currentDateTime().toString(
+                QStringLiteral("HH:mm:ss.zzz"))));
     if (state == QStringLiteral("TURN")) {
         navigationStateLabel_->setText(QStringLiteral("状态：转向中（估计位置）"));
     } else if (state == QStringLiteral("RUN")) {
