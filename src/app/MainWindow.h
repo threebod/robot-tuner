@@ -22,6 +22,7 @@ class TerminalPage;
 class VisionPage;
 class FieldPositionPage;
 class MecanumJogPage;
+class MechanismActionPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -74,5 +75,6 @@ private:
     VisionPage *visionPage_{};
     FieldPositionPage *fieldPositionPage_{};
     MecanumJogPage *mecanumPage_{};
+    MechanismActionPage *mechanismActionPage_{};
     bool serialConnected_{};
 };

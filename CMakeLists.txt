@@ -21,6 +21,8 @@ add_executable(robot_tuner
     src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/MechanismActionPage.cpp
+    src/pages/MechanismActionPage.h
     src/pages/MecanumJogPage.cpp
     src/pages/MecanumJogPage.h
     src/pages/OverviewPage.cpp
@@ -69,6 +71,8 @@ add_executable(test_ui_smoke
     src/pages/FieldPositionPage.h
     src/pages/MechanismPage.cpp
     src/pages/MechanismPage.h
+    src/pages/MechanismActionPage.cpp
+    src/pages/MechanismActionPage.h
     src/pages/MecanumJogPage.cpp
     src/pages/MecanumJogPage.h
     src/pages/OverviewPage.cpp
@@ -91,6 +95,8 @@ add_executable(test_ui_smoke
     src/device/DeviceClient.h
     src/device/MecanumJogClient.cpp
     src/device/MecanumJogClient.h
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
     src/device/ParameterCatalog.cpp
     src/device/ParameterCatalog.h
     src/device/TelemetryTypes.h
@@ -218,6 +224,16 @@ add_executable(test_mechanism_action_model
 )
 target_include_directories(test_mechanism_action_model PRIVATE src)
 target_link_libraries(test_mechanism_action_model PRIVATE Qt6::Core)
+
+add_executable(test_mechanism_action_page
+    tests/test_mechanism_action_page.cpp
+    src/pages/MechanismActionPage.cpp
+    src/pages/MechanismActionPage.h
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
+)
+target_include_directories(test_mechanism_action_page PRIVATE src)
+target_link_libraries(test_mechanism_action_page PRIVATE Qt6::Widgets)
 
 add_executable(test_end_to_end
     tests/test_end_to_end.cpp
@@ -432,6 +448,11 @@ set_tests_properties(test_mecanum_jog_page PROPERTIES
 )
 add_test(NAME test_mechanism_action_model COMMAND test_mechanism_action_model)
 set_tests_properties(test_mechanism_action_model PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+add_test(NAME test_mechanism_action_page COMMAND test_mechanism_action_page)
+set_tests_properties(test_mechanism_action_page PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
 add_test(NAME test_end_to_end COMMAND test_end_to_end)

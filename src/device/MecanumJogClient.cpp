@@ -325,6 +325,8 @@ void MecanumJogClient::handleLine(const QString &line) {
         line.startsWith(QStringLiteral("EMERGENCY STOP"))) {
         armTimer_.stop();
         pendingCommand_.clear();
+        invalidateNavigation();
+        invalidateMechanism();
         emit stopRequested();
         emit commandStateChanged(QStringLiteral("设备已停止：%1").arg(line));
         return;

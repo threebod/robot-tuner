@@ -29,6 +29,7 @@
 #include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/MechanismActionPage.h"
 #include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
@@ -197,7 +198,7 @@ int main(int argc, char **argv) {
     auto *device = window.findChild<DeviceClient *>();
     auto *serialController = window.findChild<SerialController *>();
     auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
-    if (!require(nav && nav->count() == 9, "navigation pages changed") ||
+    if (!require(nav && nav->count() == 10, "navigation pages changed") ||
         !require(fieldPositionPage && fieldPositionPage->isEnabled() &&
                      window.findChild<FieldMapWidget *>("fieldMapWidget"),
                  "field position navigation page is missing or disabled") ||
@@ -959,6 +960,8 @@ int main(int argc, char **argv) {
     auto *textProtocol = textWindow.findChild<ProtocolClient *>();
     auto *textClient = textWindow.findChild<MecanumJogClient *>();
     auto *textPage = textWindow.findChild<MecanumJogPage *>("临时调试");
+    auto *textActionRecorder =
+        textWindow.findChild<MechanismActionPage *>("动作录入");
     auto *textField = textWindow.findChild<FieldPositionPage *>("场地定位");
     auto *textNavControls =
         textWindow.findChild<QGroupBox *>("navigationControlGroup");
@@ -992,7 +995,8 @@ int main(int argc, char **argv) {
     if (!require(binaryWrites.isEmpty() &&
                      textWrites.contains(QByteArray("hb\r\n")),
                  "text mode sent binary HELLO or failed to start heartbeat") ||
-        !require(textPage->isEnabled() && textField->isEnabled() &&
+        !require(textPage->isEnabled() && textActionRecorder &&
+                     textActionRecorder->isEnabled() && textField->isEnabled() &&
                      !textNavControls->isHidden() && !textLegacyPage->isEnabled() &&
                      !textClear->isEnabled(),
                  "text mode page enablement is incorrect")) {

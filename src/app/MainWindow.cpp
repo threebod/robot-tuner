@@ -17,6 +17,7 @@
 #include "pages/FieldPositionPage.h"
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
+#include "pages/MechanismActionPage.h"
 #include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
@@ -27,7 +28,7 @@ namespace {
 
 static const QStringList kPages = {
     "总览", "场地定位", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
-    "临时调试", "串口终端", "视觉（预留）"
+    "临时调试", "动作录入", "串口终端", "视觉（预留）"
 };
 
 constexpr quint8 kDefaultTelemetryMask = 0x07;
@@ -120,6 +121,9 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("临时调试")) {
             mecanumPage_ = new MecanumJogPage(pageStack_);
             page = mecanumPage_;
+        } else if (pageName == QStringLiteral("动作录入")) {
+            mechanismActionPage_ = new MechanismActionPage(pageStack_);
+            page = mechanismActionPage_;
         } else if (pageName == QStringLiteral("串口终端")) {
             terminalPage_ = new TerminalPage(pageStack_);
             page = terminalPage_;
@@ -253,6 +257,26 @@ MainWindow::MainWindow(QWidget *parent)
             &MecanumJogClient::sendCommand);
     connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
             &MecanumJogClient::sendArmedCommand);
+    connect(mechanismActionPage_, &MechanismActionPage::initializationRequested,
+            &mecanum_, &MecanumJogClient::initializeMechanism);
+    connect(mechanismActionPage_, &MechanismActionPage::poseRequested,
+            &mecanum_, &MecanumJogClient::moveMechanism);
+    connect(mechanismActionPage_, &MechanismActionPage::commandRequested,
+            &mecanum_, &MecanumJogClient::sendCommand);
+    connect(mechanismActionPage_, &MechanismActionPage::stopRequested, this,
+            [this] { mecanum_.sendCommand(QStringLiteral("stop")); });
+    connect(&mecanum_, &MecanumJogClient::lineReceived, mechanismActionPage_,
+            &MechanismActionPage::handleDeviceLine);
+    connect(&mecanum_, &MecanumJogClient::mechanismEstimateReceived,
+            mechanismActionPage_, &MechanismActionPage::setMechanismEstimate);
+    connect(&mecanum_, &MecanumJogClient::mechanismValidityChanged,
+            mechanismActionPage_, &MechanismActionPage::setMechanismInitialized);
+    connect(&mecanum_, &MecanumJogClient::mechanismCompleted,
+            mechanismActionPage_, &MechanismActionPage::setMechanismCompleted);
+    connect(&mecanum_, &MecanumJogClient::mechanismError,
+            mechanismActionPage_, &MechanismActionPage::showError);
+    connect(&mecanum_, &MecanumJogClient::commandFailed,
+            mechanismActionPage_, &MechanismActionPage::showError);
     connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
             [this](qint64 latencyMs) {
                 if (overviewPage_ != nullptr) {
@@ -424,6 +448,8 @@ void MainWindow::handleSerialOpened() {
         fieldPositionPage_->setNavigationConnected(true);
         mecanumPage_->setEnabled(true);
         mecanumPage_->setConnected(true);
+        mechanismActionPage_->setEnabled(true);
+        mechanismActionPage_->setConnected(true);
         terminalPage_->setEnabled(true);
         terminalPage_->setConnected(true);
         emergencyStopButton_->setEnabled(true);
@@ -462,6 +488,8 @@ void MainWindow::handleSerialClosed() {
     mecanum_.setConnected(false);
     mecanumPage_->setConnected(false);
     mecanumPage_->setEnabled(false);
+    mechanismActionPage_->setConnected(false);
+    mechanismActionPage_->setEnabled(false);
     fieldPositionPage_->setEnabled(true);
     fieldPositionPage_->setNavigationConnected(false);
     if (overviewPage_ != nullptr) {
@@ -551,11 +579,16 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
         mecanumPage_->setConnected(false);
         mecanumPage_->setEnabled(false);
     }
+    if (mechanismActionPage_ != nullptr) {
+        mechanismActionPage_->setConnected(false);
+        mechanismActionPage_->setEnabled(false);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
             if (pageStack_->widget(index) == fieldPositionPage_ ||
                 pageStack_->widget(index) == actionPage_ ||
                 pageStack_->widget(index) == mecanumPage_ ||
+                pageStack_->widget(index) == mechanismActionPage_ ||
                 pageStack_->widget(index) == terminalPage_) {
                 continue;
             }
