@@ -207,6 +207,14 @@ add_executable(test_mecanum_jog_page
 target_include_directories(test_mecanum_jog_page PRIVATE src)
 target_link_libraries(test_mecanum_jog_page PRIVATE Qt6::Widgets)
 
+add_executable(test_mechanism_action_model
+    tests/test_mechanism_action_model.cpp
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
+)
+target_include_directories(test_mechanism_action_model PRIVATE src)
+target_link_libraries(test_mechanism_action_model PRIVATE Qt6::Core)
+
 add_executable(test_end_to_end
     tests/test_end_to_end.cpp
     tests/support/FakeDevice.cpp
@@ -358,6 +366,9 @@ add_executable(test_mecanum_route
 add_executable(test_mecanum_navigation
     ${MECANUM_JOG_DIR}/tests/test_navigation.c
 )
+add_executable(test_mecanum_mechanism_action
+    ${MECANUM_JOG_DIR}/tests/test_mechanism_action.c
+)
 add_executable(test_mecanum_can
     ${MECANUM_JOG_DIR}/tests/test_can.c
     ${MECANUM_JOG_DIR}/jog_can.c
@@ -365,7 +376,7 @@ add_executable(test_mecanum_can
 target_include_directories(test_mecanum_can PRIVATE
     ${MECANUM_JOG_DIR}/tests/stubs
 )
-foreach(target test_mecanum_straight test_mecanum_route test_mecanum_navigation test_mecanum_can)
+foreach(target test_mecanum_straight test_mecanum_route test_mecanum_navigation test_mecanum_mechanism_action test_mecanum_can)
     set_target_properties(${target} PROPERTIES
         AUTOMOC OFF
         C_STANDARD 99
@@ -415,6 +426,10 @@ set_tests_properties(test_mecanum_jog_page PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
+add_test(NAME test_mechanism_action_model COMMAND test_mechanism_action_model)
+set_tests_properties(test_mechanism_action_model PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
 add_test(NAME test_end_to_end COMMAND test_end_to_end)
 set_tests_properties(test_end_to_end PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
@@ -445,6 +460,7 @@ add_test(NAME test_pid_profile_baseline COMMAND test_pid_profile_baseline)
 add_test(NAME test_mecanum_straight COMMAND test_mecanum_straight)
 add_test(NAME test_mecanum_route COMMAND test_mecanum_route)
 add_test(NAME test_mecanum_navigation COMMAND test_mecanum_navigation)
+add_test(NAME test_mecanum_mechanism_action COMMAND test_mecanum_mechanism_action)
 add_test(NAME test_mecanum_can COMMAND test_mecanum_can)
 add_test(NAME test_mecanum_route_runtime
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
