@@ -57,6 +57,10 @@ int main(int argc, char **argv) {
     auto *routeRpm = requiredChild<QSpinBox>(&page, "mecanumRouteRpmSpin");
     auto *routeScale =
         requiredChild<QDoubleSpinBox>(&page, "mecanumRouteLateralScaleSpin");
+    auto *routeForwardScale =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumRouteForwardScaleSpin");
+    auto *routeTurnRpm =
+        requiredChild<QSpinBox>(&page, "mecanumRouteTurnRpmSpin");
     auto *routeScaleSend =
         requiredChild<QPushButton>(&page, "mecanumRouteLateralScaleButton");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
@@ -65,8 +69,8 @@ int main(int argc, char **argv) {
     if (!forward || !lineDistance || !lineRpm || !lineSend || !servoId ||
         !servoAngle || !auxMotorId || !auxMotorDirection ||
         !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
-        !routeScale || !routeScaleSend || !turnDirection || !turnAngle ||
-        !turnSend) {
+        !routeScale || !routeForwardScale || !routeTurnRpm ||
+        !routeScaleSend || !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
 
@@ -115,10 +119,12 @@ int main(int argc, char **argv) {
     turnDirection->setCurrentText(QStringLiteral("R"));
     turnAngle->setValue(90);
     turnSend->click();
-    routeScale->setValue(92.50);
+    routeForwardScale->setValue(102.00);
+    routeScale->setValue(90.00);
+    routeTurnRpm->setValue(45);
     routeScaleSend->click();
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&
-                     plain.contains(QStringLiteral("route scale 9250")) &&
+                     plain.contains(QStringLiteral("route tune 10200 9000 45")) &&
                      armed.contains(QStringLiteral("route step 2 120")) &&
                      armed.contains(QStringLiteral("route auto 2 120")) &&
                      armed.contains(QStringLiteral("turn R 90")) &&
@@ -192,7 +198,7 @@ int main(int argc, char **argv) {
                                   QStringLiteral("status"),
                                   QStringLiteral("route next"),
                                   QStringLiteral("route status"),
-                                  QStringLiteral("route scale 9250"),
+                                  QStringLiteral("route tune 10200 9000 45"),
                                   QStringLiteral("help")}) &&
                 armed == QStringList({QStringLiteral("S"),
                                       QStringLiteral("A"),

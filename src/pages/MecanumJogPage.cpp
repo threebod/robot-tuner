@@ -320,16 +320,28 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                              QStringLiteral("mecanumRouteNextButton"), route);
     auto *routeStatus = button(QStringLiteral("路线状态"),
                                QStringLiteral("mecanumRouteStatusButton"), route);
+    auto *routeForwardScale = new QDoubleSpinBox(route);
+    routeForwardScale->setObjectName(
+        QStringLiteral("mecanumRouteForwardScaleSpin"));
+    routeForwardScale->setRange(50.0, 150.0);
+    routeForwardScale->setDecimals(2);
+    routeForwardScale->setSingleStep(0.1);
+    routeForwardScale->setValue(100.0);
+    routeForwardScale->setSuffix(QStringLiteral(" %"));
     auto *routeLateralScale = new QDoubleSpinBox(route);
     routeLateralScale->setObjectName(
         QStringLiteral("mecanumRouteLateralScaleSpin"));
     routeLateralScale->setRange(50.0, 150.0);
     routeLateralScale->setDecimals(2);
     routeLateralScale->setSingleStep(0.1);
-    routeLateralScale->setValue(87.62);
+    routeLateralScale->setValue(90.0);
     routeLateralScale->setSuffix(QStringLiteral(" %"));
+    auto *routeTurnRpm = spin(QStringLiteral("mecanumRouteTurnRpmSpin"),
+                              10, 120, 30, route);
+    routeTurnRpm->setSingleStep(5);
+    routeTurnRpm->setSuffix(QStringLiteral(" RPM"));
     auto *routeLateralScaleSend = button(
-        QStringLiteral("设置横移比例"),
+        QStringLiteral("应用跑图参数"),
         QStringLiteral("mecanumRouteLateralScaleButton"), route);
     auto *help = button(QStringLiteral("帮助"),
                         QStringLiteral("mecanumHelpButton"), route);
@@ -351,11 +363,16 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     bind(routeNext, QStringLiteral("route next"), false);
     bind(routeStatus, QStringLiteral("route status"), false);
     connect(routeLateralScaleSend, &QPushButton::clicked, this,
-            [this, routeLateralScale] {
-                const int basisPoints = static_cast<int>(
+            [this, routeForwardScale, routeLateralScale, routeTurnRpm] {
+                const int forwardBasisPoints = static_cast<int>(
+                    routeForwardScale->value() * 100.0 + 0.5);
+                const int lateralBasisPoints = static_cast<int>(
                     routeLateralScale->value() * 100.0 + 0.5);
                 emit commandRequested(
-                    QStringLiteral("route scale %1").arg(basisPoints));
+                    QStringLiteral("route tune %1 %2 %3")
+                        .arg(forwardBasisPoints)
+                        .arg(lateralBasisPoints)
+                        .arg(routeTurnRpm->value()));
             });
     bind(help, QStringLiteral("help"), false);
     connect(turnSend, &QPushButton::clicked, this,
@@ -372,8 +389,12 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLayout->addWidget(routeStart);
     routeLayout->addWidget(routeNext);
     routeLayout->addWidget(routeStatus);
-    routeLayout->addWidget(new QLabel(QStringLiteral("横移比例"), route));
+    routeLayout->addWidget(new QLabel(QStringLiteral("纵向比例"), route));
+    routeLayout->addWidget(routeForwardScale);
+    routeLayout->addWidget(new QLabel(QStringLiteral("横向比例"), route));
     routeLayout->addWidget(routeLateralScale);
+    routeLayout->addWidget(new QLabel(QStringLiteral("转向上限"), route));
+    routeLayout->addWidget(routeTurnRpm);
     routeLayout->addWidget(routeLateralScaleSend);
     routeLayout->addWidget(turnDirection);
     routeLayout->addWidget(turnAngle);
