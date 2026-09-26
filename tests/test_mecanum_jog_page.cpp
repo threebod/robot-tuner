@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QLabel>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -63,6 +64,18 @@ int main(int argc, char **argv) {
         requiredChild<QSpinBox>(&page, "mecanumRouteTurnRpmSpin");
     auto *routeScaleSend =
         requiredChild<QPushButton>(&page, "mecanumRouteLateralScaleButton");
+    auto *headingKp =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumHeadingKpSpin");
+    auto *headingKi =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumHeadingKiSpin");
+    auto *headingKd =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumHeadingKdSpin");
+    auto *headingPidRead =
+        requiredChild<QPushButton>(&page, "mecanumHeadingPidReadButton");
+    auto *headingPidApply =
+        requiredChild<QPushButton>(&page, "mecanumHeadingPidApplyButton");
+    auto *headingPidStatus =
+        requiredChild<QLabel>(&page, "mecanumHeadingPidStatusLabel");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
@@ -70,7 +83,9 @@ int main(int argc, char **argv) {
         !servoAngle || !auxMotorId || !auxMotorDirection ||
         !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
         !routeScale || !routeForwardScale || !routeTurnRpm ||
-        !routeScaleSend || !turnDirection || !turnAngle || !turnSend) {
+        !routeScaleSend || !headingKp || !headingKi || !headingKd ||
+        !headingPidRead || !headingPidApply || !headingPidStatus ||
+        !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
 
@@ -123,8 +138,26 @@ int main(int argc, char **argv) {
     routeScale->setValue(90.00);
     routeTurnRpm->setValue(45);
     routeScaleSend->click();
+    headingKp->setValue(2.35);
+    headingKi->setValue(0.40);
+    headingKd->setValue(0.18);
+    headingPidApply->click();
+    page.showError(QStringLiteral("串口未连接"));
+    if (!require(headingPidStatus->text() == QStringLiteral("串口未连接"),
+                 "PID command failure was not shown")) {
+        return 1;
+    }
+    headingPidRead->click();
+    page.appendLine(QStringLiteral("PID kp_x100=200 ki_x100=25 kd_x100=12 RAM_only"));
+    if (!require(headingKp->value() == 2.00 && headingKi->value() == 0.25 &&
+                     headingKd->value() == 0.12,
+                 "PID readback did not update the controls")) {
+        return 1;
+    }
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&
                      plain.contains(QStringLiteral("route tune 10200 9000 45")) &&
+                     plain.contains(QStringLiteral("pid set 235 40 18")) &&
+                     plain.contains(QStringLiteral("pid get")) &&
                      armed.contains(QStringLiteral("route step 2 120")) &&
                      armed.contains(QStringLiteral("route auto 2 120")) &&
                      armed.contains(QStringLiteral("turn R 90")) &&
@@ -151,6 +184,8 @@ int main(int argc, char **argv) {
         QStringLiteral("mecanumRouteNextButton"),
         QStringLiteral("mecanumRouteStatusButton"),
         QStringLiteral("mecanumRouteLateralScaleButton"),
+        QStringLiteral("mecanumHeadingPidReadButton"),
+        QStringLiteral("mecanumHeadingPidApplyButton"),
         QStringLiteral("mecanumHelpButton")};
     for (const QString &name : requiredButtons) {
         if (!require(page.findChild<QPushButton *>(name) != nullptr,
@@ -172,6 +207,8 @@ int main(int argc, char **argv) {
         QStringLiteral("mecanumRouteNextButton"),
         QStringLiteral("mecanumRouteStatusButton"),
         QStringLiteral("mecanumRouteLateralScaleButton"),
+        QStringLiteral("mecanumHeadingPidReadButton"),
+        QStringLiteral("mecanumHeadingPidApplyButton"),
         QStringLiteral("mecanumHelpButton")};
     for (const QString &name : plainButtonNames) {
         page.findChild<QPushButton *>(name)->click();
@@ -199,6 +236,8 @@ int main(int argc, char **argv) {
                                   QStringLiteral("route next"),
                                   QStringLiteral("route status"),
                                   QStringLiteral("route tune 10200 9000 45"),
+                                  QStringLiteral("pid get"),
+                                  QStringLiteral("pid set 200 25 12"),
                                   QStringLiteral("help")}) &&
                 armed == QStringList({QStringLiteral("S"),
                                       QStringLiteral("A"),

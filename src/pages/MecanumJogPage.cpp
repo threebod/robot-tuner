@@ -8,10 +8,12 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QtMath>
 
 namespace {
 
@@ -402,6 +404,50 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLayout->addWidget(help);
     grid->addWidget(route, 2, 0, 1, 2);
 
+    auto *headingPid = new QGroupBox(QStringLiteral("导航航向 PID（停车后写入 RAM）"), controls_);
+    auto *headingPidLayout = new QHBoxLayout(headingPid);
+    headingKpSpin_ = new QDoubleSpinBox(headingPid);
+    headingKpSpin_->setObjectName(QStringLiteral("mecanumHeadingKpSpin"));
+    headingKpSpin_->setRange(0.50, 4.00);
+    headingKpSpin_->setDecimals(2);
+    headingKpSpin_->setValue(2.00);
+    headingKiSpin_ = new QDoubleSpinBox(headingPid);
+    headingKiSpin_->setObjectName(QStringLiteral("mecanumHeadingKiSpin"));
+    headingKiSpin_->setRange(0.00, 1.00);
+    headingKiSpin_->setDecimals(2);
+    headingKiSpin_->setValue(0.25);
+    headingKdSpin_ = new QDoubleSpinBox(headingPid);
+    headingKdSpin_->setObjectName(QStringLiteral("mecanumHeadingKdSpin"));
+    headingKdSpin_->setRange(0.00, 1.00);
+    headingKdSpin_->setDecimals(2);
+    headingKdSpin_->setValue(0.12);
+    auto *headingPidRead = button(QStringLiteral("读取"),
+                                  QStringLiteral("mecanumHeadingPidReadButton"), headingPid);
+    auto *headingPidApply = button(QStringLiteral("写入 RAM"),
+                                   QStringLiteral("mecanumHeadingPidApplyButton"), headingPid);
+    headingPidStatusLabel_ = new QLabel(QStringLiteral("未读取设备值"), headingPid);
+    headingPidStatusLabel_->setObjectName(QStringLiteral("mecanumHeadingPidStatusLabel"));
+    headingPidLayout->addWidget(new QLabel(QStringLiteral("Kp"), headingPid));
+    headingPidLayout->addWidget(headingKpSpin_);
+    headingPidLayout->addWidget(new QLabel(QStringLiteral("Ki"), headingPid));
+    headingPidLayout->addWidget(headingKiSpin_);
+    headingPidLayout->addWidget(new QLabel(QStringLiteral("Kd"), headingPid));
+    headingPidLayout->addWidget(headingKdSpin_);
+    headingPidLayout->addWidget(headingPidRead);
+    headingPidLayout->addWidget(headingPidApply);
+    headingPidLayout->addWidget(headingPidStatusLabel_, 1);
+    connect(headingPidRead, &QPushButton::clicked, this, [this] {
+        emit commandRequested(QStringLiteral("pid get"));
+    });
+    connect(headingPidApply, &QPushButton::clicked, this, [this] {
+        headingPidStatusLabel_->setText(QStringLiteral("等待设备回读"));
+        emit commandRequested(QStringLiteral("pid set %1 %2 %3")
+                                  .arg(qRound(headingKpSpin_->value() * 100.0))
+                                  .arg(qRound(headingKiSpin_->value() * 100.0))
+                                  .arg(qRound(headingKdSpin_->value() * 100.0)));
+    });
+    grid->addWidget(headingPid, 3, 0, 1, 2);
+
     scroll->setWidget(controls_);
     pageLayout->addWidget(scroll, 1);
     stateLabel_ = new QLabel(QStringLiteral("未连接"), this);
@@ -418,6 +464,7 @@ void MecanumJogPage::setConnected(bool connected) {
     controls_->setEnabled(connected);
     if (!connected) {
         stateLabel_->setText(QStringLiteral("未连接"));
+        headingPidStatusLabel_->setText(QStringLiteral("未读取设备值"));
     }
 }
 
@@ -427,8 +474,22 @@ void MecanumJogPage::setCommandState(const QString &state) {
 
 void MecanumJogPage::appendLine(const QString &line) {
     replyLabel_->setText(QStringLiteral("最近回复：%1").arg(line));
+    static const QRegularExpression headingPidReply(QStringLiteral(
+        "^PID kp_x100=(\\d+) ki_x100=(\\d+) kd_x100=(\\d+) RAM_only$"));
+    const QRegularExpressionMatch match = headingPidReply.match(line);
+    if (match.hasMatch()) {
+        headingKpSpin_->setValue(match.captured(1).toInt() / 100.0);
+        headingKiSpin_->setValue(match.captured(2).toInt() / 100.0);
+        headingKdSpin_->setValue(match.captured(3).toInt() / 100.0);
+        headingPidStatusLabel_->setText(QStringLiteral("已读取设备 RAM 当前值"));
+    } else if (line.startsWith(QStringLiteral("ERR PID:"))) {
+        headingPidStatusLabel_->setText(line);
+    }
 }
 
 void MecanumJogPage::showError(const QString &error) {
     stateLabel_->setText(QStringLiteral("错误：%1").arg(error));
+    if (headingPidStatusLabel_->text() == QStringLiteral("等待设备回读")) {
+        headingPidStatusLabel_->setText(error);
+    }
 }
