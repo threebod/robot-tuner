@@ -439,6 +439,36 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     headingPidControls->addWidget(headingPidApply);
     headingPidControls->addWidget(headingPidStatusLabel_, 1);
     headingPidLayout->addLayout(headingPidControls);
+    auto *pidMoveControls = new QHBoxLayout;
+    auto *pidMoveDuration = spin(QStringLiteral("mecanumPidMoveDurationSpin"),
+                                 1000, 5000, 2000, headingPid);
+    pidMoveDuration->setSuffix(QStringLiteral(" ms"));
+    auto *pidMoveRpm = spin(QStringLiteral("mecanumPidMoveRpmSpin"),
+                            10, 30, 20, headingPid);
+    pidMoveRpm->setSuffix(QStringLiteral(" RPM"));
+    auto *pidMoveLeft = button(QStringLiteral("向左定向移动"),
+                               QStringLiteral("mecanumPidMoveLeftButton"), headingPid);
+    auto *pidMoveRight = button(QStringLiteral("向右定向移动"),
+                                QStringLiteral("mecanumPidMoveRightButton"), headingPid);
+    pidMoveControls->addWidget(new QLabel(QStringLiteral("限时横移"), headingPid));
+    pidMoveControls->addWidget(pidMoveDuration);
+    pidMoveControls->addWidget(pidMoveRpm);
+    pidMoveControls->addWidget(pidMoveLeft);
+    pidMoveControls->addWidget(pidMoveRight);
+    pidMoveControls->addStretch();
+    headingPidLayout->addLayout(pidMoveControls);
+    connect(pidMoveLeft, &QPushButton::clicked, this,
+            [this, pidMoveDuration, pidMoveRpm] {
+                emit armedCommandRequested(QStringLiteral("pid move A %1 %2")
+                                             .arg(pidMoveDuration->value())
+                                             .arg(pidMoveRpm->value()));
+            });
+    connect(pidMoveRight, &QPushButton::clicked, this,
+            [this, pidMoveDuration, pidMoveRpm] {
+                emit armedCommandRequested(QStringLiteral("pid move D %1 %2")
+                                             .arg(pidMoveDuration->value())
+                                             .arg(pidMoveRpm->value()));
+            });
     auto *headingPlots = new QHBoxLayout;
     headingAnglePlot_ = new TelemetryPlot(2, 1000, headingPid);
     headingAnglePlot_->setObjectName(QStringLiteral("mecanumHeadingAnglePlot"));
@@ -491,7 +521,8 @@ void MecanumJogPage::setCommandState(const QString &state) {
 
 void MecanumJogPage::appendLine(const QString &line) {
     replyLabel_->setText(QStringLiteral("最近回复：%1").arg(line));
-    if (line.startsWith(QStringLiteral("NAV INIT "))) {
+    if (line.startsWith(QStringLiteral("NAV INIT ")) ||
+        line == QStringLiteral("RUN PID lateral heading hold; auto-disarmed")) {
         headingAnglePlot_->clear();
         headingOutputPlot_->clear();
     }

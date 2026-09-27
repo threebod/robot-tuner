@@ -81,6 +81,13 @@ int main(int argc, char **argv) {
         requiredChild<TelemetryPlot>(&page, "mecanumHeadingAnglePlot");
     auto *headingOutputPlot =
         requiredChild<TelemetryPlot>(&page, "mecanumHeadingOutputPlot");
+    auto *pidMoveDuration =
+        requiredChild<QSpinBox>(&page, "mecanumPidMoveDurationSpin");
+    auto *pidMoveRpm = requiredChild<QSpinBox>(&page, "mecanumPidMoveRpmSpin");
+    auto *pidMoveLeft =
+        requiredChild<QPushButton>(&page, "mecanumPidMoveLeftButton");
+    auto *pidMoveRight =
+        requiredChild<QPushButton>(&page, "mecanumPidMoveRightButton");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
@@ -90,7 +97,8 @@ int main(int argc, char **argv) {
         !routeScale || !routeForwardScale || !routeTurnRpm ||
         !routeScaleSend || !headingKp || !headingKi || !headingKd ||
         !headingPidRead || !headingPidApply || !headingPidStatus ||
-        !headingAnglePlot || !headingOutputPlot ||
+        !headingAnglePlot || !headingOutputPlot || !pidMoveDuration ||
+        !pidMoveRpm || !pidMoveLeft || !pidMoveRight ||
         !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
@@ -160,6 +168,18 @@ int main(int argc, char **argv) {
                  "PID readback did not update the controls")) {
         return 1;
     }
+    pidMoveDuration->setValue(1500);
+    pidMoveRpm->setValue(20);
+    pidMoveLeft->click();
+    pidMoveRight->click();
+    if (!require(pidMoveDuration->minimum() == 1000 &&
+                     pidMoveDuration->maximum() == 5000 &&
+                     pidMoveRpm->minimum() == 10 && pidMoveRpm->maximum() == 30 &&
+                     armed.at(armed.size() - 2) == QStringLiteral("pid move A 1500 20") &&
+                     armed.back() == QStringLiteral("pid move D 1500 20"),
+                 "PID lateral test controls emitted the wrong commands")) {
+        return 1;
+    }
     page.appendLine(QStringLiteral("PID TRACE target_cdeg=9000 actual_cdeg=8950 output_rpm=3"));
     page.appendLine(QStringLiteral("PID TRACE target_cdeg=9000 actual_cdeg=9030 output_rpm=-2"));
     if (!require(headingAnglePlot->sampleCount() == 2 &&
@@ -167,8 +187,15 @@ int main(int argc, char **argv) {
                  "PID telemetry was not plotted")) {
         return 1;
     }
+    page.appendLine(QStringLiteral("RUN PID lateral heading hold; auto-disarmed"));
+    if (!require(headingAnglePlot->sampleCount() == 0 &&
+                     headingOutputPlot->sampleCount() == 0,
+                 "new PID lateral test did not clear old curves")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("PID TRACE target_cdeg=9000 actual_cdeg=9030 output_rpm=-2"));
     page.appendLine(QStringLiteral("PID TRACE malformed"));
-    if (!require(headingAnglePlot->sampleCount() == 2,
+    if (!require(headingAnglePlot->sampleCount() == 1,
                  "malformed PID telemetry was plotted")) {
         return 1;
     }
