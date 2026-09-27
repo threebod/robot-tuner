@@ -410,17 +410,17 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     auto *headingPidControls = new QHBoxLayout;
     headingKpSpin_ = new QDoubleSpinBox(headingPid);
     headingKpSpin_->setObjectName(QStringLiteral("mecanumHeadingKpSpin"));
-    headingKpSpin_->setRange(0.50, 4.00);
+    headingKpSpin_->setRange(0.00, 10.00);
     headingKpSpin_->setDecimals(2);
     headingKpSpin_->setValue(2.00);
     headingKiSpin_ = new QDoubleSpinBox(headingPid);
     headingKiSpin_->setObjectName(QStringLiteral("mecanumHeadingKiSpin"));
-    headingKiSpin_->setRange(0.00, 1.00);
+    headingKiSpin_->setRange(0.00, 5.00);
     headingKiSpin_->setDecimals(2);
     headingKiSpin_->setValue(0.25);
     headingKdSpin_ = new QDoubleSpinBox(headingPid);
     headingKdSpin_->setObjectName(QStringLiteral("mecanumHeadingKdSpin"));
-    headingKdSpin_->setRange(0.00, 1.00);
+    headingKdSpin_->setRange(0.00, 5.00);
     headingKdSpin_->setDecimals(2);
     headingKdSpin_->setValue(0.12);
     auto *headingPidRead = button(QStringLiteral("读取"),

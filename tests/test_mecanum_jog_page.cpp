@@ -168,6 +168,24 @@ int main(int argc, char **argv) {
                  "PID readback did not update the controls")) {
         return 1;
     }
+    if (!require(headingKp->minimum() == 0.00 && headingKp->maximum() == 10.00 &&
+                     headingKi->minimum() == 0.00 && headingKi->maximum() == 5.00 &&
+                     headingKd->minimum() == 0.00 && headingKd->maximum() == 5.00,
+                 "PID gain range is incorrect")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("PID kp_x100=1000 ki_x100=500 kd_x100=500 RAM_only"));
+    if (!require(headingKp->value() == 10.00 && headingKi->value() == 5.00 &&
+                     headingKd->value() == 5.00,
+                 "PID maximum readback was clipped")) {
+        return 1;
+    }
+    headingPidApply->click();
+    if (!require(plain.back() == QStringLiteral("pid set 1000 500 500"),
+                 "PID maximum values were not sent")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("PID kp_x100=200 ki_x100=25 kd_x100=12 RAM_only"));
     pidMoveDuration->setValue(1500);
     pidMoveRpm->setValue(20);
     pidMoveLeft->click();
