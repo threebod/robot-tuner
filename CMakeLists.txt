@@ -213,6 +213,8 @@ add_executable(test_mecanum_jog_page
     tests/test_mecanum_jog_page.cpp
     src/pages/MecanumJogPage.cpp
     src/pages/MecanumJogPage.h
+    src/widgets/TelemetryPlot.cpp
+    src/widgets/TelemetryPlot.h
 )
 target_include_directories(test_mecanum_jog_page PRIVATE src)
 target_link_libraries(test_mecanum_jog_page PRIVATE Qt6::Widgets)

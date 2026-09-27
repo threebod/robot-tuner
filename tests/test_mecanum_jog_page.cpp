@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "pages/MecanumJogPage.h"
+#include "widgets/TelemetryPlot.h"
 
 namespace {
 
@@ -76,6 +77,10 @@ int main(int argc, char **argv) {
         requiredChild<QPushButton>(&page, "mecanumHeadingPidApplyButton");
     auto *headingPidStatus =
         requiredChild<QLabel>(&page, "mecanumHeadingPidStatusLabel");
+    auto *headingAnglePlot =
+        requiredChild<TelemetryPlot>(&page, "mecanumHeadingAnglePlot");
+    auto *headingOutputPlot =
+        requiredChild<TelemetryPlot>(&page, "mecanumHeadingOutputPlot");
     auto *turnDirection = requiredChild<QComboBox>(&page, "mecanumTurnDirectionCombo");
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
@@ -85,6 +90,7 @@ int main(int argc, char **argv) {
         !routeScale || !routeForwardScale || !routeTurnRpm ||
         !routeScaleSend || !headingKp || !headingKi || !headingKd ||
         !headingPidRead || !headingPidApply || !headingPidStatus ||
+        !headingAnglePlot || !headingOutputPlot ||
         !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
@@ -152,6 +158,24 @@ int main(int argc, char **argv) {
     if (!require(headingKp->value() == 2.00 && headingKi->value() == 0.25 &&
                      headingKd->value() == 0.12,
                  "PID readback did not update the controls")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("PID TRACE target_cdeg=9000 actual_cdeg=8950 output_rpm=3"));
+    page.appendLine(QStringLiteral("PID TRACE target_cdeg=9000 actual_cdeg=9030 output_rpm=-2"));
+    if (!require(headingAnglePlot->sampleCount() == 2 &&
+                     headingOutputPlot->sampleCount() == 2,
+                 "PID telemetry was not plotted")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("PID TRACE malformed"));
+    if (!require(headingAnglePlot->sampleCount() == 2,
+                 "malformed PID telemetry was plotted")) {
+        return 1;
+    }
+    page.appendLine(QStringLiteral("NAV INIT x=2250 y=2250 yaw_cdeg=9000"));
+    if (!require(headingAnglePlot->sampleCount() == 0 &&
+                     headingOutputPlot->sampleCount() == 0,
+                 "new navigation did not clear PID curves")) {
         return 1;
     }
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&

@@ -1,4 +1,5 @@
 #include "pages/MecanumJogPage.h"
+#include "widgets/TelemetryPlot.h"
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -405,7 +406,8 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     grid->addWidget(route, 2, 0, 1, 2);
 
     auto *headingPid = new QGroupBox(QStringLiteral("导航航向 PID（停车后写入 RAM）"), controls_);
-    auto *headingPidLayout = new QHBoxLayout(headingPid);
+    auto *headingPidLayout = new QVBoxLayout(headingPid);
+    auto *headingPidControls = new QHBoxLayout;
     headingKpSpin_ = new QDoubleSpinBox(headingPid);
     headingKpSpin_->setObjectName(QStringLiteral("mecanumHeadingKpSpin"));
     headingKpSpin_->setRange(0.50, 4.00);
@@ -427,15 +429,27 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                                    QStringLiteral("mecanumHeadingPidApplyButton"), headingPid);
     headingPidStatusLabel_ = new QLabel(QStringLiteral("未读取设备值"), headingPid);
     headingPidStatusLabel_->setObjectName(QStringLiteral("mecanumHeadingPidStatusLabel"));
-    headingPidLayout->addWidget(new QLabel(QStringLiteral("Kp"), headingPid));
-    headingPidLayout->addWidget(headingKpSpin_);
-    headingPidLayout->addWidget(new QLabel(QStringLiteral("Ki"), headingPid));
-    headingPidLayout->addWidget(headingKiSpin_);
-    headingPidLayout->addWidget(new QLabel(QStringLiteral("Kd"), headingPid));
-    headingPidLayout->addWidget(headingKdSpin_);
-    headingPidLayout->addWidget(headingPidRead);
-    headingPidLayout->addWidget(headingPidApply);
-    headingPidLayout->addWidget(headingPidStatusLabel_, 1);
+    headingPidControls->addWidget(new QLabel(QStringLiteral("Kp"), headingPid));
+    headingPidControls->addWidget(headingKpSpin_);
+    headingPidControls->addWidget(new QLabel(QStringLiteral("Ki"), headingPid));
+    headingPidControls->addWidget(headingKiSpin_);
+    headingPidControls->addWidget(new QLabel(QStringLiteral("Kd"), headingPid));
+    headingPidControls->addWidget(headingKdSpin_);
+    headingPidControls->addWidget(headingPidRead);
+    headingPidControls->addWidget(headingPidApply);
+    headingPidControls->addWidget(headingPidStatusLabel_, 1);
+    headingPidLayout->addLayout(headingPidControls);
+    auto *headingPlots = new QHBoxLayout;
+    headingAnglePlot_ = new TelemetryPlot(2, 1000, headingPid);
+    headingAnglePlot_->setObjectName(QStringLiteral("mecanumHeadingAnglePlot"));
+    headingAnglePlot_->setChannelNames({QStringLiteral("目标航向"), QStringLiteral("IMU 航向")});
+    headingOutputPlot_ = new TelemetryPlot(1, 1000, headingPid);
+    headingOutputPlot_->setObjectName(QStringLiteral("mecanumHeadingOutputPlot"));
+    headingOutputPlot_->setChannelNames({QStringLiteral("纠偏输出")});
+    headingPlots->addWidget(headingAnglePlot_);
+    headingPlots->addWidget(headingOutputPlot_);
+    headingPidLayout->addWidget(new QLabel(QStringLiteral("航向（°） / 纠偏输出（RPM）"), headingPid));
+    headingPidLayout->addLayout(headingPlots);
     connect(headingPidRead, &QPushButton::clicked, this, [this] {
         emit commandRequested(QStringLiteral("pid get"));
     });
@@ -457,6 +471,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     replyLabel_->setWordWrap(true);
     pageLayout->addWidget(stateLabel_);
     pageLayout->addWidget(replyLabel_);
+    headingPlotClock_.start();
     setConnected(false);
 }
 
@@ -465,6 +480,8 @@ void MecanumJogPage::setConnected(bool connected) {
     if (!connected) {
         stateLabel_->setText(QStringLiteral("未连接"));
         headingPidStatusLabel_->setText(QStringLiteral("未读取设备值"));
+        headingAnglePlot_->clear();
+        headingOutputPlot_->clear();
     }
 }
 
@@ -474,6 +491,19 @@ void MecanumJogPage::setCommandState(const QString &state) {
 
 void MecanumJogPage::appendLine(const QString &line) {
     replyLabel_->setText(QStringLiteral("最近回复：%1").arg(line));
+    if (line.startsWith(QStringLiteral("NAV INIT "))) {
+        headingAnglePlot_->clear();
+        headingOutputPlot_->clear();
+    }
+    static const QRegularExpression headingPidTrace(QStringLiteral(
+        "^PID TRACE target_cdeg=(-?\\d+) actual_cdeg=(-?\\d+) output_rpm=(-?\\d+)$"));
+    const QRegularExpressionMatch trace = headingPidTrace.match(line);
+    if (trace.hasMatch()) {
+        const qint64 now = headingPlotClock_.elapsed();
+        headingAnglePlot_->append(now, {trace.captured(1).toDouble() / 100.0,
+                                        trace.captured(2).toDouble() / 100.0});
+        headingOutputPlot_->append(now, {trace.captured(3).toDouble()});
+    }
     static const QRegularExpression headingPidReply(QStringLiteral(
         "^PID kp_x100=(\\d+) ki_x100=(\\d+) kd_x100=(\\d+) RAM_only$"));
     const QRegularExpressionMatch match = headingPidReply.match(line);

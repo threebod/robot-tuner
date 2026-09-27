@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QWidget>
 
 class QLabel;
@@ -7,6 +8,7 @@ class QDoubleSpinBox;
 class QSlider;
 class QSpinBox;
 class QComboBox;
+class TelemetryPlot;
 
 class MecanumJogPage : public QWidget {
     Q_OBJECT
@@ -34,4 +36,7 @@ private:
     QDoubleSpinBox *headingKiSpin_{};
     QDoubleSpinBox *headingKdSpin_{};
     QLabel *headingPidStatusLabel_{};
+    TelemetryPlot *headingAnglePlot_{};
+    TelemetryPlot *headingOutputPlot_{};
+    QElapsedTimer headingPlotClock_;
 };
