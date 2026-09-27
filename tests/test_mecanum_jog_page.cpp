@@ -63,6 +63,8 @@ int main(int argc, char **argv) {
         requiredChild<QDoubleSpinBox>(&page, "mecanumRouteForwardScaleSpin");
     auto *routeTurnRpm =
         requiredChild<QSpinBox>(&page, "mecanumRouteTurnRpmSpin");
+    auto *routeLateralRpm =
+        requiredChild<QSpinBox>(&page, "mecanumRouteLateralRpmSpin");
     auto *routeScaleSend =
         requiredChild<QPushButton>(&page, "mecanumRouteLateralScaleButton");
     auto *headingKp =
@@ -95,11 +97,18 @@ int main(int argc, char **argv) {
         !servoAngle || !auxMotorId || !auxMotorDirection ||
         !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
         !routeScale || !routeForwardScale || !routeTurnRpm ||
-        !routeScaleSend || !headingKp || !headingKi || !headingKd ||
+        !routeLateralRpm || !routeScaleSend || !headingKp || !headingKi || !headingKd ||
         !headingPidRead || !headingPidApply || !headingPidStatus ||
         !headingAnglePlot || !headingOutputPlot || !pidMoveDuration ||
         !pidMoveRpm || !pidMoveLeft || !pidMoveRight ||
         !turnDirection || !turnAngle || !turnSend) {
+        return 1;
+    }
+    if (!require(routeTurnRpm->value() == 45 &&
+                     routeLateralRpm->value() == 60 &&
+                     routeLateralRpm->minimum() == 10 &&
+                     routeLateralRpm->maximum() == 120,
+                 "route speed limit controls are incorrect")) {
         return 1;
     }
 
@@ -151,6 +160,7 @@ int main(int argc, char **argv) {
     routeForwardScale->setValue(102.00);
     routeScale->setValue(90.00);
     routeTurnRpm->setValue(45);
+    routeLateralRpm->setValue(80);
     routeScaleSend->click();
     headingKp->setValue(2.35);
     headingKi->setValue(0.40);
@@ -192,7 +202,7 @@ int main(int argc, char **argv) {
     pidMoveRight->click();
     if (!require(pidMoveDuration->minimum() == 1000 &&
                      pidMoveDuration->maximum() == 5000 &&
-                     pidMoveRpm->minimum() == 10 && pidMoveRpm->maximum() == 30 &&
+                     pidMoveRpm->minimum() == 10 && pidMoveRpm->maximum() == 120 &&
                      armed.at(armed.size() - 2) == QStringLiteral("pid move A 1500 20") &&
                      armed.back() == QStringLiteral("pid move D 1500 20"),
                  "PID lateral test controls emitted the wrong commands")) {
@@ -224,7 +234,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (!require(plain.contains(QStringLiteral("servo 4 360")) &&
-                     plain.contains(QStringLiteral("route tune 10200 9000 45")) &&
+                     plain.contains(QStringLiteral("route tune 10200 9000 45 80")) &&
                      plain.contains(QStringLiteral("pid set 235 40 18")) &&
                      plain.contains(QStringLiteral("pid get")) &&
                      armed.contains(QStringLiteral("route step 2 120")) &&
@@ -304,7 +314,7 @@ int main(int argc, char **argv) {
                                   QStringLiteral("status"),
                                   QStringLiteral("route next"),
                                   QStringLiteral("route status"),
-                                  QStringLiteral("route tune 10200 9000 45"),
+                                  QStringLiteral("route tune 10200 9000 45 80"),
                                   QStringLiteral("pid get"),
                                   QStringLiteral("pid set 200 25 12"),
                                   QStringLiteral("help")}) &&
