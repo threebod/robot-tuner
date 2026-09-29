@@ -73,6 +73,9 @@ public:
     void setFullRouteStage(int index, const QString &stage);
     void setFullRouteCompleted(qint32 xMm, qint32 yMm);
     void setFullRouteError(const QString &message);
+    void setRawPickRouteState(const QString &state, int color, int slot);
+    void setRawPickRouteContinued();
+    void setMissionPhase(const QString &phase, const QString &station);
 
 public slots:
     void selectFieldPoint(QPointF fieldPoint);
@@ -83,6 +86,9 @@ signals:
     void navigationInitRequested(int startZone);
     void navigationTargetRequested(qint32 xMm, qint32 yMm, quint16 rpm);
     void fullRouteRequested(int startZone, quint16 rpm);
+    void rawPickRouteRequested(int startZone, quint16 rpm);
+    void rawPickRouteContinueRequested();
+    void missionRouteRequested(int startZone, quint16 rpm);
 
 private:
     void applyInputPose();
@@ -122,6 +128,11 @@ private:
     QSpinBox *fullRouteRpmSpin_{};
     QPushButton *fullRouteStartButton_{};
     QLabel *fullRouteStatusLabel_{};
+    QPushButton *rawPickStartButton_{};
+    QPushButton *missionStartButton_{};
+    QPushButton *rawPickContinueButton_{};
+    QLabel *rawPickStatusLabel_{};
+    QLabel *missionStatusLabel_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;
@@ -133,6 +144,8 @@ private:
     bool navigationInitialized_{};
     bool navigationRunning_{};
     bool fullRouteRunning_{};
+    bool rawPickReady_{};
+    bool missionRunning_{};
     bool navigationTargetValid_{};
     QPointF navigationTarget_;
 };

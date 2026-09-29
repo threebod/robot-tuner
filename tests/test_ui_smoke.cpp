@@ -169,12 +169,11 @@ int main(int argc, char **argv) {
         window.findChild<QPushButton *>("terminalPauseButton");
     auto *terminalNotice =
         window.findChild<QLabel *>("terminalBypassNotice");
-    auto *visionPage = window.findChild<QWidget *>("视觉（预留）");
+    auto *visionPage = window.findChild<QWidget *>("视觉微调");
     auto *fieldPositionPage = window.findChild<FieldPositionPage *>("场地定位");
     auto *mecanumPage = window.findChild<MecanumJogPage *>("临时调试");
-    auto *visionPlaceholder =
-        window.findChild<QLabel *>("visionPlaceholderLabel");
-    auto *visionUsart1 = window.findChild<QLabel *>("visionUsart1Label");
+    auto *visionStart = window.findChild<QPushButton *>("visionStartButton");
+    auto *visionState = window.findChild<QLabel *>("visionStateLabel");
     auto *pidProfile = window.findChild<QComboBox *>("pidProfileCombo");
     auto *pidKp = window.findChild<QDoubleSpinBox *>("pidKpSpinBox");
     auto *pidWrite = window.findChild<QPushButton *>("pidWriteButton");
@@ -253,11 +252,8 @@ int main(int argc, char **argv) {
                       terminalNotice->text().contains(
                           QStringLiteral("绕过请求跟踪")),
                   "terminal page controls or safety notice are missing") ||
-        !require(visionPage && visionPlaceholder && visionUsart1 &&
-                      visionPlaceholder->text().contains(QStringLiteral("K230")) &&
-                      visionPlaceholder->text().contains(QStringLiteral("MaixCAM")) &&
-                      visionUsart1->text().contains(QStringLiteral("USART1")),
-                  "vision placeholder or USART1 description is missing") ||
+        !require(visionPage && visionStart && visionState,
+                  "vision alignment controls are missing") ||
         !require(imuPage && !imuPage->isEnabled() && overviewPage &&
                      overviewLink && overviewLatency &&
                      overviewLink->text() == QStringLiteral("未连接"),
@@ -983,6 +979,12 @@ int main(int argc, char **argv) {
         textWindow.findChild<QPushButton *>("fullRouteStartButton");
     auto *textFullRouteStatus =
         textWindow.findChild<QLabel *>("fullRouteStatusLabel");
+    auto *textRawPickStart =
+        textWindow.findChild<QPushButton *>("rawPickStartButton");
+    auto *textRawPickContinue =
+        textWindow.findChild<QPushButton *>("rawPickContinueButton");
+    auto *textRawPickStatus =
+        textWindow.findChild<QLabel *>("rawPickStatusLabel");
     auto *textTerminal = textWindow.findChild<TerminalPage *>("串口终端");
     auto *textTerminalLog =
         textWindow.findChild<QPlainTextEdit *>("terminalLogTextEdit");
@@ -1020,7 +1022,8 @@ int main(int argc, char **argv) {
                      !textNavControls->isHidden() && !textLegacyPage->isEnabled() &&
                      !textClear->isEnabled() && textCoordinateX && textCoordinateY &&
                      textCoordinateRpm && textCoordinateMove && textFullRouteZone &&
-                     textFullRouteRpm && textFullRouteStart && textFullRouteStatus,
+                     textFullRouteRpm && textFullRouteStart && textFullRouteStatus &&
+                     textRawPickStart && textRawPickContinue && textRawPickStatus,
                  "text mode page enablement is incorrect")) {
         return 1;
     }
@@ -1075,6 +1078,34 @@ int main(int argc, char **argv) {
         "ROUTE DONE x=2250 y=150 yaw_cdeg=9000\r\n"));
     if (!require(textFullRouteStatus->text().contains(QStringLiteral("完成")),
                  "full route status was not displayed on the field page")) {
+        return 1;
+    }
+    textWrites.clear();
+    acceptNextConfirmation();
+    textRawPickStart->click();
+    textClient->ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"
+        "ROUTE STAGE index=4 name=RAW_1\r\n"
+        "ROUTE RAWPICK state=WAIT_MATERIAL color=4 slot=1\r\n"
+        "ROUTE RAWPICK state=DONE color=6 slot=3\r\n"));
+    if (!require(textWrites ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("route rawpick 2 100\r\n")}) &&
+                     textRawPickContinue->isEnabled() &&
+                     textRawPickStatus->text().contains(QStringLiteral("三件")),
+                 "raw-pick route UI is not wired to progress and confirmation")) {
+        return 1;
+    }
+    acceptNextConfirmation();
+    textRawPickContinue->click();
+    if (!require(textWrites.back() == QByteArray("route next\r\n") &&
+                     textRawPickContinue->isEnabled(),
+                 "raw-pick route confirmation did not send route next")) {
+        return 1;
+    }
+    textClient->ingestBytes(QByteArrayView("ROUTE continuing\r\n"));
+    if (!require(!textRawPickContinue->isEnabled(),
+                 "raw-pick route acknowledgement did not close confirmation")) {
         return 1;
     }
     textTerminalClear->click();

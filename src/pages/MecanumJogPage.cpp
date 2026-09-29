@@ -178,6 +178,53 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
             });
     diagnosticsLayout->addRow(QStringLiteral("辅助电机"), auxMotorRow);
 
+    auto *auxDistanceRow = makeRow();
+    auto *auxDistanceMotorId = combo(
+        QStringLiteral("mecanumAuxDistanceMotorIdCombo"),
+        {QStringLiteral("5"), QStringLiteral("6")}, auxDistanceRow);
+    auto *auxDistance = new QDoubleSpinBox(auxDistanceRow);
+    auxDistance->setObjectName(QStringLiteral("mecanumAuxDistanceSpin"));
+    auxDistance->setRange(-135.0, 135.0);
+    auxDistance->setDecimals(1);
+    auxDistance->setSingleStep(1.0);
+    auxDistance->setValue(10.0);
+    auxDistance->setSuffix(QStringLiteral(" mm"));
+    auto *auxDistanceRpm = spin(QStringLiteral("mecanumAuxDistanceRpmSpin"),
+                                10, 2000, 30, auxDistanceRow);
+    auxDistanceRpm->setSuffix(QStringLiteral(" RPM"));
+    auto *auxDistanceAccel = spin(
+        QStringLiteral("mecanumAuxDistanceAccelSpin"), 1, 240, 50,
+        auxDistanceRow);
+    auto *auxDistanceSend = button(
+        QStringLiteral("定距移动"),
+        QStringLiteral("mecanumAuxDistanceSendButton"), auxDistanceRow);
+    auxDistanceRow->layout()->addWidget(auxDistanceMotorId);
+    auxDistanceRow->layout()->addWidget(auxDistance);
+    auxDistanceRow->layout()->addWidget(auxDistanceRpm);
+    auxDistanceRow->layout()->addWidget(auxDistanceAccel);
+    auxDistanceRow->layout()->addWidget(auxDistanceSend);
+    connect(auxDistanceMotorId, &QComboBox::currentTextChanged, this,
+            [auxDistance](const QString &id) {
+                const double maximum = id == QStringLiteral("5") ? 135.0 : 187.0;
+                auxDistance->setRange(-maximum, maximum);
+            });
+    connect(auxDistanceSend, &QPushButton::clicked, this,
+            [this, auxDistanceMotorId, auxDistance, auxDistanceRpm,
+             auxDistanceAccel] {
+                const int distanceDmm = qRound(auxDistance->value() * 10.0);
+                if (distanceDmm == 0) {
+                    showError(QStringLiteral("辅助电机移动距离不能为 0"));
+                    return;
+                }
+                emit armedCommandRequested(
+                    QStringLiteral("auxmove %1 %2 %3 %4")
+                        .arg(auxDistanceMotorId->currentText())
+                        .arg(distanceDmm)
+                        .arg(auxDistanceRpm->value())
+                        .arg(auxDistanceAccel->value()));
+            });
+    diagnosticsLayout->addRow(QStringLiteral("辅助电机定距"), auxDistanceRow);
+
     auto *wheelRow = makeRow();
     auto *wheelId = spin(QStringLiteral("mecanumWheelIdSpin"), 1, 4, 1, wheelRow);
     auto *wheelDirection = combo(QStringLiteral("mecanumWheelDirectionCombo"),

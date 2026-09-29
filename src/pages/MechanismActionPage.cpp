@@ -1,6 +1,7 @@
 #include "pages/MechanismActionPage.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -12,6 +13,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -56,7 +58,7 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
     nameEdit_->setObjectName(QStringLiteral("actionNameEdit"));
     initialHorizontal_ = spin(initialGroup, "actionInitialHorizontalSpin", -1220,
                               650, 0, QStringLiteral(" ×0.1 mm"));
-    initialLift_ = spin(initialGroup, "actionInitialLiftSpin", 0, 1350, 0,
+    initialLift_ = spin(initialGroup, "actionInitialLiftSpin", 0, 1500, 0,
                         QStringLiteral(" ×0.1 mm"));
     initialTurret_ = spin(initialGroup, "actionInitialTurretSpin", 0, 3600, 0,
                           QStringLiteral(" ×0.1°"));
@@ -69,10 +71,14 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
                                   position);
     }
     gripperOpenAngle_ = spin(initialGroup, "actionGripperOpenAngleSpin", 0, 270,
-                             45, QStringLiteral("°"));
+                             70, QStringLiteral("°"));
     gripperCloseAngle_ = spin(initialGroup, "actionGripperCloseAngleSpin", 0,
-                              270, 6, QStringLiteral("°"));
-    const int platformDefaults[] = {20, 139, 256};
+                              270, 35, QStringLiteral("°"));
+    gripperSpeed_ = spin(initialGroup, "actionGripperSpeedSpin", 10, 1800, 1200,
+                         QStringLiteral(" ×0.1°/s"));
+    platformSpeed_ = spin(initialGroup, "actionPlatformSpeedSpin", 10, 1800, 1200,
+                          QStringLiteral(" ×0.1°/s"));
+    const int platformDefaults[] = {26, 146, 264};
     for (int index = 0; index < 3; ++index) {
         platformAngles_[index] =
             spin(initialGroup, qPrintable(QStringLiteral("actionPlatform%1AngleSpin")
@@ -98,13 +104,78 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
     initialLayout->addWidget(platformAngles_[0], 1, 6);
     initialLayout->addWidget(platformAngles_[1], 1, 7);
     initialLayout->addWidget(platformAngles_[2], 1, 8);
+    initialLayout->addWidget(new QLabel(QStringLiteral("夹爪速度"), initialGroup), 2, 0);
+    initialLayout->addWidget(gripperSpeed_, 2, 1);
+    initialLayout->addWidget(new QLabel(QStringLiteral("平台速度"), initialGroup), 2, 2);
+    initialLayout->addWidget(platformSpeed_, 2, 3);
     initialLayout->addWidget(initializeButton_, 0, 8);
     layout->addWidget(initialGroup);
+
+    auto *positionGroup =
+        new QGroupBox(QStringLiteral("初始姿态确认后的三轴微调"), this);
+    auto *positionLayout = new QGridLayout(positionGroup);
+    horizontalPositionSlider_ = new QSlider(Qt::Horizontal, positionGroup);
+    horizontalPositionSlider_->setObjectName(
+        QStringLiteral("actionHorizontalPositionSlider"));
+    horizontalPositionSlider_->setRange(-1220, 650);
+    liftPositionSlider_ = new QSlider(Qt::Horizontal, positionGroup);
+    liftPositionSlider_->setObjectName(QStringLiteral("actionLiftPositionSlider"));
+    liftPositionSlider_->setRange(0, 1500);
+    turretPositionSlider_ = new QSlider(Qt::Horizontal, positionGroup);
+    turretPositionSlider_->setObjectName(QStringLiteral("actionTurretPositionSlider"));
+    turretPositionSlider_->setRange(0, 3600);
+    horizontalPositionLabel_ = new QLabel(QStringLiteral("0 ×0.1 mm"), positionGroup);
+    horizontalPositionLabel_->setObjectName(
+        QStringLiteral("actionHorizontalPositionLabel"));
+    liftPositionLabel_ = new QLabel(QStringLiteral("0 ×0.1 mm"), positionGroup);
+    liftPositionLabel_->setObjectName(QStringLiteral("actionLiftPositionLabel"));
+    turretPositionLabel_ = new QLabel(QStringLiteral("0 ×0.1°"), positionGroup);
+    turretPositionLabel_->setObjectName(QStringLiteral("actionTurretPositionLabel"));
+    const QStringList positionLabels{QStringLiteral("6号水平"),
+                                     QStringLiteral("5号升降"),
+                                     QStringLiteral("转台")};
+    QWidget *positionSliders[] = {horizontalPositionSlider_, liftPositionSlider_,
+                                  turretPositionSlider_};
+    QWidget *positionValues[] = {horizontalPositionLabel_, liftPositionLabel_,
+                                 turretPositionLabel_};
+    for (int index = 0; index < 3; ++index) {
+        positionLayout->addWidget(new QLabel(positionLabels[index], positionGroup),
+                                  index, 0);
+        positionLayout->addWidget(positionSliders[index], index, 1);
+        positionLayout->addWidget(positionValues[index], index, 2);
+    }
+    layout->addWidget(positionGroup);
+
+    connect(horizontalPositionSlider_, &QSlider::valueChanged, this,
+            [this](int value) {
+                horizontalPositionLabel_->setText(
+                    QStringLiteral("%1 ×0.1 mm").arg(value));
+            });
+    connect(liftPositionSlider_, &QSlider::valueChanged, this,
+            [this](int value) {
+                liftPositionLabel_->setText(
+                    QStringLiteral("%1 ×0.1 mm").arg(value));
+            });
+    connect(turretPositionSlider_, &QSlider::valueChanged, this,
+            [this](int value) {
+                turretPositionLabel_->setText(
+                    QStringLiteral("%1 ×0.1°").arg(value));
+            });
+    connect(horizontalPositionSlider_, &QSlider::sliderReleased, this,
+            [this] {
+                requestManualPoseAdjustment(0, horizontalPositionSlider_->value());
+            });
+    connect(liftPositionSlider_, &QSlider::sliderReleased, this, [this] {
+        requestManualPoseAdjustment(1, liftPositionSlider_->value());
+    });
+    connect(turretPositionSlider_, &QSlider::sliderReleased, this, [this] {
+        requestManualPoseAdjustment(2, turretPositionSlider_->value());
+    });
 
     auto *poseGroup = new QGroupBox(QStringLiteral("组合姿态步骤"), this);
     auto *poseLayout = new QGridLayout(poseGroup);
     poseHorizontal_ = spin(poseGroup, "actionPoseHorizontalSpin", -1220, 650, 0);
-    poseLift_ = spin(poseGroup, "actionPoseLiftSpin", 0, 1350, 0);
+    poseLift_ = spin(poseGroup, "actionPoseLiftSpin", 0, 1500, 0);
     poseTurret_ = spin(poseGroup, "actionPoseTurretSpin", 0, 3600, 0);
     horizontalRpm_ = spin(poseGroup, "actionHorizontalRpmSpin", 10, 2000, 30,
                           QStringLiteral(" RPM"));
@@ -112,7 +183,7 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
     liftRpm_ = spin(poseGroup, "actionLiftRpmSpin", 10, 2000, 30,
                     QStringLiteral(" RPM"));
     liftAccel_ = spin(poseGroup, "actionLiftAccelSpin", 1, 240, 50);
-    turretSpeed_ = spin(poseGroup, "actionTurretSpeedSpin", 10, 300, 130,
+    turretSpeed_ = spin(poseGroup, "actionTurretSpeedSpin", 10, 1800, 1200,
                         QStringLiteral(" ×0.1°/s"));
     stepWait_ = spin(poseGroup, "actionStepWaitSpin", 0, 60000, 0,
                      QStringLiteral(" ms"));
@@ -174,12 +245,33 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
 
     auto *editRow = new QHBoxLayout;
     auto *remove = button(this, QStringLiteral("删除"), "actionRemoveStepButton");
+    replaceTypeCombo_ = new QComboBox(this);
+    replaceTypeCombo_->setObjectName(QStringLiteral("actionReplaceTypeCombo"));
+    replaceTypeCombo_->addItem(QStringLiteral("姿态"),
+                               static_cast<int>(MechanismStepType::Pose));
+    replaceTypeCombo_->addItem(QStringLiteral("夹爪"),
+                               static_cast<int>(MechanismStepType::Gripper));
+    replaceTypeCombo_->addItem(QStringLiteral("平台"),
+                               static_cast<int>(MechanismStepType::Platform));
+    replaceTypeCombo_->addItem(QStringLiteral("舵机"),
+                               static_cast<int>(MechanismStepType::Servo));
+    replaceTypeCombo_->addItem(QStringLiteral("等待"),
+                               static_cast<int>(MechanismStepType::Wait));
+    replaceTypeCombo_->setToolTip(
+        QStringLiteral("先选目标动作类型，再填写对应编辑区的参数"));
+    replaceStepButton_ = button(this, QStringLiteral("替换选中动作"),
+                                "actionReplaceStepButton");
+    replaceStepButton_->setToolTip(
+        QStringLiteral("用所选类型替换当前行，保留该行动作顺序和总数"));
     auto *moveUp = button(this, QStringLiteral("上移"), "actionMoveUpButton");
     auto *moveDown = button(this, QStringLiteral("下移"), "actionMoveDownButton");
     auto *load = button(this, QStringLiteral("打开 JSON"), "actionLoadButton");
     auto *save = button(this, QStringLiteral("保存 JSON"), "actionSaveButton");
     auto *exportC = button(this, QStringLiteral("导出 C 表"), "actionExportButton");
-    for (QWidget *widget : {remove, moveUp, moveDown, load, save, exportC}) {
+    const QList<QWidget *> editControls{remove, replaceTypeCombo_,
+                                        replaceStepButton_, moveUp, moveDown,
+                                        load, save, exportC};
+    for (QWidget *widget : editControls) {
         editRow->addWidget(widget);
     }
     editRow->addStretch();
@@ -190,13 +282,20 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
                                  "actionPlaySelectedButton");
     playFromButton_ = button(this, QStringLiteral("从选中开始"),
                              "actionPlayFromButton");
-    playAllButton_ = button(this, QStringLiteral("完整测试一次"),
+    playAllButton_ = button(this, QStringLiteral("完整测试"),
                             "actionPlayAllButton");
+    loopEnabled_ = new QCheckBox(QStringLiteral("循环模式"), this);
+    loopEnabled_->setObjectName(QStringLiteral("actionLoopEnabledCheck"));
+    loopCount_ = spin(this, "actionLoopCountSpin", 2, 999, 2,
+                      QStringLiteral(" 次"));
+    loopCount_->setEnabled(false);
     returnInitialButton_ = button(this, QStringLiteral("回到初始位置"),
                                   "actionReturnInitialButton");
     stopButton_ = button(this, QStringLiteral("停止"), "actionStopButton");
-    for (QWidget *widget : {playSelectedButton_, playFromButton_, playAllButton_,
-                            returnInitialButton_, stopButton_}) {
+    const QList<QWidget *> testControls{
+        playSelectedButton_, playFromButton_, playAllButton_, loopEnabled_,
+        loopCount_, returnInitialButton_, stopButton_};
+    for (QWidget *widget : testControls) {
         testRow->addWidget(widget);
     }
     stateLabel_ = new QLabel(QStringLiteral("未连接"), this);
@@ -206,6 +305,20 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
 
     connect(initializeButton_, &QPushButton::clicked, this, [this] {
         updateInitialState();
+        pendingInitialPose_ = sequence_.initial.pose;
+        initialGripperAngle_ = sequence_.initial.gripperOpen
+                                   ? sequence_.initial.gripperOpenDeg
+                                   : sequence_.initial.gripperCloseDeg;
+        initialPlatformAngle_ =
+            sequence_.initial.platformDeg[sequence_.initial.platform - 1];
+        initialGripperSpeed_ = sequence_.initial.gripperDps10;
+        initialPlatformSpeed_ = sequence_.initial.platformDps10;
+        initialServoStage_ = 0;
+        awaitingInitialConfirmation_ = true;
+        confirmedPoseValid_ = false;
+        manualAdjustmentPending_ = false;
+        initialized_ = false;
+        updateControls();
         emit initializationRequested(sequence_.initial.pose);
         stateLabel_->setText(QStringLiteral("等待固件确认初始姿态"));
     });
@@ -255,8 +368,13 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
         if (row >= 0) sequence_.steps.removeAt(row);
         refreshTable();
     });
+    connect(replaceStepButton_, &QPushButton::clicked, this,
+            &MechanismActionPage::replaceSelectedStep);
     connect(stepTable_, &QTableWidget::currentCellChanged, this,
-            [this](int, int, int, int) { updateControls(); });
+            [this](int, int, int, int) {
+                loadSelectedStep();
+                updateControls();
+            });
     connect(moveUp, &QPushButton::clicked, this, [this] {
         const int row = stepTable_->currentRow();
         if (row > 0) {
@@ -328,7 +446,11 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
         if (row >= 0) startReplay(sequence_.steps.mid(row), QStringLiteral("从选中步骤测试"));
     });
     connect(playAllButton_, &QPushButton::clicked, this, [this] {
-        startReplay(sequence_.steps, QStringLiteral("完整测试"));
+        const int cycles = loopEnabled_->isChecked() ? loopCount_->value() : 1;
+        startReplay(sequence_.steps, QStringLiteral("完整测试"), cycles);
+    });
+    connect(loopEnabled_, &QCheckBox::toggled, this, [this](bool enabled) {
+        loopCount_->setEnabled(enabled && !replaying_);
     });
     connect(returnInitialButton_, &QPushButton::clicked, this, [this] {
         updateInitialState();
@@ -345,8 +467,13 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
     });
     connect(stopButton_, &QPushButton::clicked, this, [this] {
         cancelReplay();
+        initialized_ = false;
+        confirmedPoseValid_ = false;
+        awaitingInitialConfirmation_ = false;
+        manualAdjustmentPending_ = false;
         emit stopRequested();
         stateLabel_->setText(QStringLiteral("已请求停止；请人工复位后重新初始化"));
+        updateControls();
     });
     setConnected(false);
 }
@@ -379,6 +506,10 @@ void MechanismActionPage::updateInitialState() {
     sequence_.initial.platform = initialPlatform_->currentData().toInt();
     sequence_.initial.gripperOpenDeg = gripperOpenAngle_->value();
     sequence_.initial.gripperCloseDeg = gripperCloseAngle_->value();
+    sequence_.initial.gripperDps10 = gripperSpeed_->value();
+    sequence_.initial.platformDps10 = platformSpeed_->value();
+    sequence_.loopEnabled = loopEnabled_->isChecked();
+    sequence_.loopCount = loopCount_->value();
     for (int index = 0; index < 3; ++index) {
         sequence_.initial.platformDeg[index] = platformAngles_[index]->value();
     }
@@ -394,9 +525,125 @@ void MechanismActionPage::applySequenceToEditors() {
     initialPlatform_->setCurrentIndex(initial.platform - 1);
     gripperOpenAngle_->setValue(initial.gripperOpenDeg);
     gripperCloseAngle_->setValue(initial.gripperCloseDeg);
+    gripperSpeed_->setValue(initial.gripperDps10);
+    platformSpeed_->setValue(initial.platformDps10);
+    loopEnabled_->setChecked(sequence_.loopEnabled);
+    loopCount_->setValue(sequence_.loopCount);
     for (int index = 0; index < 3; ++index) {
         platformAngles_[index]->setValue(initial.platformDeg[index]);
     }
+}
+
+void MechanismActionPage::loadSelectedStep() {
+    const int row = stepTable_->currentRow();
+    if (row < 0 || row >= sequence_.steps.size()) return;
+
+    const MechanismStep &step = sequence_.steps[row];
+    replaceTypeCombo_->setCurrentIndex(
+        replaceTypeCombo_->findData(static_cast<int>(step.type)));
+    stepWait_->setValue(step.waitMs);
+    switch (step.type) {
+    case MechanismStepType::Pose:
+        poseHorizontal_->setValue(step.pose.horizontalDmm);
+        poseLift_->setValue(step.pose.liftDmm);
+        poseTurret_->setValue(step.pose.turretDdeg);
+        horizontalRpm_->setValue(step.pose.horizontalRpm);
+        horizontalAccel_->setValue(step.pose.horizontalAccel);
+        liftRpm_->setValue(step.pose.liftRpm);
+        liftAccel_->setValue(step.pose.liftAccel);
+        turretSpeed_->setValue(step.pose.turretDps10);
+        break;
+    case MechanismStepType::Gripper:
+        gripperStep_->setCurrentIndex(gripperStep_->findData(step.value));
+        break;
+    case MechanismStepType::Platform:
+        platformStep_->setCurrentIndex(platformStep_->findData(step.value));
+        break;
+    case MechanismStepType::Servo:
+        servoChannel_->setValue(step.channel);
+        servoAngle_->setValue(step.value);
+        break;
+    case MechanismStepType::Wait:
+        waitOnly_->setValue(step.waitMs);
+        break;
+    }
+}
+
+void MechanismActionPage::replaceSelectedStep() {
+    const int row = stepTable_->currentRow();
+    if (row < 0 || row >= sequence_.steps.size()) return;
+
+    MechanismStep replacement;
+    replacement.type = static_cast<MechanismStepType>(
+        replaceTypeCombo_->currentData().toInt());
+    replacement.waitMs = sequence_.steps[row].waitMs;
+    switch (replacement.type) {
+    case MechanismStepType::Pose:
+        replacement.pose = editedPose();
+        replacement.waitMs = stepWait_->value();
+        break;
+    case MechanismStepType::Gripper:
+        replacement.value = gripperStep_->currentData().toInt();
+        break;
+    case MechanismStepType::Platform:
+        replacement.value = platformStep_->currentData().toInt();
+        break;
+    case MechanismStepType::Servo:
+        if (servoChannel_->value() != 4 && servoAngle_->value() > 270) {
+            showError(QStringLiteral("舵机 2/3 角度不能超过 270°"));
+            return;
+        }
+        replacement.channel = servoChannel_->value();
+        replacement.value = servoAngle_->value();
+        break;
+    case MechanismStepType::Wait:
+        replacement.waitMs = waitOnly_->value();
+        break;
+    }
+    sequence_.steps[row] = replacement;
+    refreshTable();
+    stepTable_->selectRow(row);
+    loadSelectedStep();
+}
+
+void MechanismActionPage::requestManualPoseAdjustment(int axis, int value) {
+    if (!connected_ || !initialized_ || !confirmedPoseValid_ || replaying_ ||
+        manualAdjustmentPending_) {
+        if (confirmedPoseValid_) updatePositionSliders(confirmedPose_);
+        return;
+    }
+
+    MechanismPoseData target = confirmedPose_;
+    if (axis == 0) target.horizontalDmm = value;
+    else if (axis == 1) target.liftDmm = value;
+    else if (axis == 2) target.turretDdeg = value;
+    else return;
+
+    if (target.horizontalDmm == confirmedPose_.horizontalDmm &&
+        target.liftDmm == confirmedPose_.liftDmm &&
+        target.turretDdeg == confirmedPose_.turretDdeg) {
+        updatePositionSliders(confirmedPose_);
+        return;
+    }
+    if (!confirmHighSpeed(target)) {
+        updatePositionSliders(confirmedPose_);
+        return;
+    }
+
+    manualAdjustmentPending_ = true;
+    stateLabel_->setText(QStringLiteral("正在执行三轴位置微调"));
+    emit poseRequested(target);
+    updateControls();
+}
+
+void MechanismActionPage::updatePositionSliders(
+    const MechanismPoseData &pose) {
+    if (!horizontalPositionSlider_->isSliderDown())
+        horizontalPositionSlider_->setValue(pose.horizontalDmm);
+    if (!liftPositionSlider_->isSliderDown())
+        liftPositionSlider_->setValue(pose.liftDmm);
+    if (!turretPositionSlider_->isSliderDown())
+        turretPositionSlider_->setValue(pose.turretDdeg);
 }
 
 QString MechanismActionPage::stepDescription(const MechanismStep &step) const {
@@ -434,6 +681,10 @@ void MechanismActionPage::setConnected(bool connected) {
     connected_ = connected;
     if (!connected_) {
         initialized_ = false;
+        awaitingInitialConfirmation_ = false;
+        confirmedPoseValid_ = false;
+        manualAdjustmentPending_ = false;
+        initialServoStage_ = 0;
         cancelReplay();
         stateLabel_->setText(QStringLiteral("未连接"));
     }
@@ -442,27 +693,77 @@ void MechanismActionPage::setConnected(bool connected) {
 
 void MechanismActionPage::setMechanismInitialized(bool initialized) {
     initialized_ = initialized;
-    if (!initialized_) cancelReplay();
-    stateLabel_->setText(initialized_ ? QStringLiteral("初始姿态已确认，可测试动作")
+    if (initialized_ && awaitingInitialConfirmation_) {
+        confirmedPose_ = pendingInitialPose_;
+        confirmedPoseValid_ = true;
+        awaitingInitialConfirmation_ = false;
+        updatePositionSliders(confirmedPose_);
+    } else if (!initialized_) {
+        awaitingInitialConfirmation_ = false;
+        confirmedPoseValid_ = false;
+        manualAdjustmentPending_ = false;
+        initialServoStage_ = 0;
+        cancelReplay();
+    }
+    stateLabel_->setText(initialized_ && initialServoStage_ != 0
+                             ? QStringLiteral("初始姿态已确认，正在调整舵机") :
+                         initialized_ ? QStringLiteral("初始姿态已确认，可测试动作")
                                       : QStringLiteral("位置已失效，请人工复位后重新初始化"));
     updateControls();
 }
 
 void MechanismActionPage::setMechanismEstimate(MechanismPoseData pose,
                                                 QString state) {
-    stateLabel_->setText(QStringLiteral("%1：H=%2 L=%3 T=%4")
-                             .arg(state).arg(pose.horizontalDmm)
-                             .arg(pose.liftDmm).arg(pose.turretDdeg));
+    if (confirmedPoseValid_) {
+        confirmedPose_.horizontalDmm = pose.horizontalDmm;
+        confirmedPose_.liftDmm = pose.liftDmm;
+        confirmedPose_.turretDdeg = pose.turretDdeg;
+        if (!manualAdjustmentPending_ && !replaying_) {
+            updatePositionSliders(confirmedPose_);
+        }
+    }
+    if (initialServoStage_ == 0) {
+        stateLabel_->setText(QStringLiteral("%1：H=%2 L=%3 T=%4")
+                                 .arg(state).arg(pose.horizontalDmm)
+                                 .arg(pose.liftDmm).arg(pose.turretDdeg));
+    }
 }
 
 void MechanismActionPage::setMechanismCompleted(MechanismPoseData pose) {
     setMechanismEstimate(pose, QStringLiteral("到位"));
+    manualAdjustmentPending_ = false;
+    if (confirmedPoseValid_) updatePositionSliders(confirmedPose_);
     if (replaying_ && replaySteps_[replayIndex_].type == MechanismStepType::Pose) {
         finishCurrentStep();
     }
+    updateControls();
 }
 
 void MechanismActionPage::handleDeviceLine(const QString &line) {
+    if (awaitingInitialConfirmation_ &&
+        line.startsWith(QStringLiteral("MECH INIT "))) {
+        initialServoStage_ = 1;
+        setMechanismInitialized(true);
+        emit commandRequested(QStringLiteral("servo 2 %1 %2")
+                                  .arg(initialGripperAngle_).arg(initialGripperSpeed_));
+        return;
+    }
+    if (initialServoStage_ == 1 &&
+        (line.startsWith(QStringLiteral("DONE servo=2")) ||
+         line.startsWith(QStringLiteral("OK servo=2")))) {
+        initialServoStage_ = 2;
+        emit commandRequested(QStringLiteral("servo 3 %1 %2")
+                                  .arg(initialPlatformAngle_).arg(initialPlatformSpeed_));
+        return;
+    }
+    if (initialServoStage_ == 2 &&
+        (line.startsWith(QStringLiteral("DONE servo=3")) ||
+         line.startsWith(QStringLiteral("OK servo=3")))) {
+        initialServoStage_ = 0;
+        stateLabel_->setText(QStringLiteral("初始姿态与舵机已指令到位，可测试动作"));
+        updateControls();
+        return;
+    }
     if (replaying_ && replayIndex_ < replaySteps_.size() &&
         replaySteps_[replayIndex_].type != MechanismStepType::Pose &&
         replaySteps_[replayIndex_].type != MechanismStepType::Wait &&
@@ -473,16 +774,38 @@ void MechanismActionPage::handleDeviceLine(const QString &line) {
 }
 
 void MechanismActionPage::showError(const QString &error) {
+    if (initialServoStage_ != 0) {
+        initialized_ = false;
+        confirmedPoseValid_ = false;
+        initialServoStage_ = 0;
+    }
+    awaitingInitialConfirmation_ = false;
+    manualAdjustmentPending_ = false;
     cancelReplay();
+    if (confirmedPoseValid_) updatePositionSliders(confirmedPose_);
     stateLabel_->setText(QStringLiteral("错误：%1").arg(error));
+    updateControls();
 }
 
 void MechanismActionPage::updateControls() {
-    initializeButton_->setEnabled(connected_ && !replaying_);
-    const bool canReplay = connected_ && initialized_ && !replaying_;
+    initializeButton_->setEnabled(connected_ && !replaying_ &&
+                                  initialServoStage_ == 0);
+    const bool canReplay = connected_ && initialized_ && !replaying_ &&
+                           initialServoStage_ == 0;
+    const bool canAdjust = canReplay && confirmedPoseValid_ &&
+                           !manualAdjustmentPending_;
+    horizontalPositionSlider_->setEnabled(canAdjust);
+    liftPositionSlider_->setEnabled(canAdjust);
+    turretPositionSlider_->setEnabled(canAdjust);
+    const bool canEditSelectedStep = !replaying_ &&
+                                     stepTable_->currentRow() >= 0;
+    replaceTypeCombo_->setEnabled(canEditSelectedStep);
+    replaceStepButton_->setEnabled(canEditSelectedStep);
     playSelectedButton_->setEnabled(canReplay && stepTable_->currentRow() >= 0);
     playFromButton_->setEnabled(canReplay && stepTable_->currentRow() >= 0);
     playAllButton_->setEnabled(canReplay && !sequence_.steps.isEmpty());
+    loopEnabled_->setEnabled(!replaying_);
+    loopCount_->setEnabled(!replaying_ && loopEnabled_->isChecked());
     returnInitialButton_->setEnabled(canReplay);
     stopButton_->setEnabled(connected_);
 }
@@ -497,10 +820,14 @@ bool MechanismActionPage::confirmHighSpeed(const MechanismPoseData &pose) {
 }
 
 void MechanismActionPage::startReplay(QVector<MechanismStep> steps,
-                                      const QString &description) {
+                                      const QString &description,
+                                      int cycleCount) {
     if (!connected_ || !initialized_ || replaying_ || steps.isEmpty()) return;
     replaySteps_ = std::move(steps);
     replayIndex_ = 0;
+    replayCycle_ = 1;
+    replayCycleCount_ = cycleCount;
+    replayDescription_ = description;
     replaying_ = true;
     stateLabel_->setText(description);
     updateControls();
@@ -510,15 +837,31 @@ void MechanismActionPage::startReplay(QVector<MechanismStep> steps,
 void MechanismActionPage::dispatchCurrentStep() {
     if (!replaying_) return;
     if (replayIndex_ >= replaySteps_.size()) {
+        if (replayCycle_ < replayCycleCount_) {
+            ++replayCycle_;
+            replayIndex_ = 0;
+            stateLabel_->setText(QStringLiteral("%1：第 %2/%3 轮")
+                                     .arg(replayDescription_)
+                                     .arg(replayCycle_)
+                                     .arg(replayCycleCount_));
+            dispatchCurrentStep();
+            return;
+        }
         replaying_ = false;
         stateLabel_->setText(QStringLiteral("动作测试完成"));
         updateControls();
         return;
     }
     const MechanismStep &step = replaySteps_[replayIndex_];
-    stateLabel_->setText(QStringLiteral("执行 %1/%2：%3")
-                             .arg(replayIndex_ + 1).arg(replaySteps_.size())
-                             .arg(stepDescription(step)));
+    const QString progress = replayCycleCount_ > 1
+        ? QStringLiteral("第 %1/%2 轮，执行 %3/%4：%5")
+              .arg(replayCycle_).arg(replayCycleCount_)
+              .arg(replayIndex_ + 1).arg(replaySteps_.size())
+              .arg(stepDescription(step))
+        : QStringLiteral("执行 %1/%2：%3")
+              .arg(replayIndex_ + 1).arg(replaySteps_.size())
+              .arg(stepDescription(step));
+    stateLabel_->setText(progress);
     if (step.type == MechanismStepType::Pose) {
         if (!confirmHighSpeed(step.pose)) {
             cancelReplay();
@@ -543,7 +886,11 @@ void MechanismActionPage::dispatchCurrentStep() {
         channel = 3;
         angle = sequence_.initial.platformDeg[step.value - 1];
     }
-    emit commandRequested(QStringLiteral("servo %1 %2").arg(channel).arg(angle));
+    int speed = sequence_.initial.pose.turretDps10;
+    if (channel == 2) speed = sequence_.initial.gripperDps10;
+    else if (channel == 3) speed = sequence_.initial.platformDps10;
+    emit commandRequested(QStringLiteral("servo %1 %2 %3")
+                              .arg(channel).arg(angle).arg(speed));
 }
 
 void MechanismActionPage::finishCurrentStep() {
@@ -561,6 +908,9 @@ void MechanismActionPage::cancelReplay() {
     waitTimer_.stop();
     replaySteps_.clear();
     replayIndex_ = 0;
+    replayCycle_ = 1;
+    replayCycleCount_ = 1;
+    replayDescription_.clear();
     replaying_ = false;
     updateControls();
 }

@@ -53,6 +53,16 @@ int main(int argc, char **argv) {
         requiredChild<QComboBox>(&page, "mecanumAuxMotorDirectionCombo");
     auto *auxMotorSend =
         requiredChild<QPushButton>(&page, "mecanumAuxMotorSendButton");
+    auto *auxDistanceMotorId =
+        requiredChild<QComboBox>(&page, "mecanumAuxDistanceMotorIdCombo");
+    auto *auxDistance =
+        requiredChild<QDoubleSpinBox>(&page, "mecanumAuxDistanceSpin");
+    auto *auxDistanceRpm =
+        requiredChild<QSpinBox>(&page, "mecanumAuxDistanceRpmSpin");
+    auto *auxDistanceAccel =
+        requiredChild<QSpinBox>(&page, "mecanumAuxDistanceAccelSpin");
+    auto *auxDistanceSend =
+        requiredChild<QPushButton>(&page, "mecanumAuxDistanceSendButton");
     auto *routeMode = requiredChild<QComboBox>(&page, "mecanumRouteModeCombo");
     auto *routeZone = requiredChild<QComboBox>(&page, "mecanumRouteZoneCombo");
     auto *routeStart = requiredChild<QPushButton>(&page, "mecanumRouteStartButton");
@@ -94,10 +104,13 @@ int main(int argc, char **argv) {
     auto *turnAngle = requiredChild<QSpinBox>(&page, "mecanumTurnAngleSpin");
     auto *turnSend = requiredChild<QPushButton>(&page, "mecanumTurnSendButton");
     if (!forward || !lineDistance || !lineRpm || !lineSend || !servoId ||
-        !servoAngle || !auxMotorId || !auxMotorDirection ||
-        !auxMotorSend || !routeMode || !routeZone || !routeStart || !routeRpm ||
+        !servoAngle || !auxMotorId || !auxMotorDirection || !auxMotorSend ||
+        !auxDistanceMotorId || !auxDistance || !auxDistanceRpm ||
+        !auxDistanceAccel || !auxDistanceSend ||
+        !routeMode || !routeZone || !routeStart || !routeRpm ||
         !routeScale || !routeForwardScale || !routeTurnRpm ||
-        !routeLateralRpm || !routeScaleSend || !headingKp || !headingKi || !headingKd ||
+        !routeLateralRpm ||
+        !routeScaleSend || !headingKp || !headingKi || !headingKd ||
         !headingPidRead || !headingPidApply || !headingPidStatus ||
         !headingAnglePlot || !headingOutputPlot || !pidMoveDuration ||
         !pidMoveRpm || !pidMoveLeft || !pidMoveRight ||
@@ -132,6 +145,33 @@ int main(int argc, char **argv) {
                      lineDistance->singleStep() == 100 &&
                      lineRpm->minimum() == 10 && lineRpm->maximum() == 120,
                  "line parameter bounds are incorrect")) {
+        return 1;
+    }
+    if (!require(auxDistance->minimum() == -135.0 &&
+                     auxDistance->maximum() == 135.0 &&
+                     auxDistanceRpm->minimum() == 10 &&
+                     auxDistanceRpm->maximum() == 2000 &&
+                     auxDistanceAccel->minimum() == 1 &&
+                     auxDistanceAccel->maximum() == 240,
+                 "auxiliary distance parameter bounds are incorrect")) {
+        return 1;
+    }
+    auxDistanceMotorId->setCurrentText(QStringLiteral("6"));
+    auxDistance->setValue(-12.3);
+    auxDistanceRpm->setValue(120);
+    auxDistanceAccel->setValue(80);
+    auxDistanceSend->click();
+    if (!require(auxDistance->minimum() == -187.0 &&
+                     auxDistance->maximum() == 187.0 &&
+                     armed.back() == QStringLiteral("auxmove 6 -123 120 80"),
+                 "auxiliary distance command mapping is incorrect")) {
+        return 1;
+    }
+    const qsizetype auxCommandCount = armed.size();
+    auxDistance->setValue(0.0);
+    auxDistanceSend->click();
+    if (!require(armed.size() == auxCommandCount,
+                 "zero-distance auxiliary move was emitted")) {
         return 1;
     }
 
@@ -253,6 +293,7 @@ int main(int argc, char **argv) {
         QStringLiteral("mecanumRightButton"),
         QStringLiteral("mecanumStraightSendButton"),
         QStringLiteral("mecanumAuxMotorSendButton"),
+        QStringLiteral("mecanumAuxDistanceSendButton"),
         QStringLiteral("mecanumWheelSendButton"),
         QStringLiteral("mecanumCanCheckButton"),
         QStringLiteral("mecanumInvertSendButton"),

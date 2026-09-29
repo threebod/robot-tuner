@@ -29,6 +29,11 @@ MecanumJogClient::MecanumJogClient(QObject *parent) : QObject(parent) {
     connect(&armTimer_, &QTimer::timeout, this, [this] {
         failPending(QStringLiteral("等待 arm 回复超时"));
     });
+    missionSetupTimer_.setSingleShot(true);
+    missionSetupTimer_.setInterval(10000);
+    connect(&missionSetupTimer_, &QTimer::timeout, this, [this] {
+        failMissionSetup(QStringLiteral("任务启动准备超时"));
+    });
 }
 
 void MecanumJogClient::setConnected(bool connected) {
@@ -44,9 +49,12 @@ void MecanumJogClient::setConnected(bool connected) {
     }
 
     heartbeatTimer_.stop();
+    missionSetupStage_ = 0;
+    missionSetupTimer_.stop();
     invalidateNavigation();
     invalidateMechanism();
     setFullRouteRunning(false);
+    setVisionRunning(false);
     if (!pendingCommand_.isEmpty()) {
         failPending(QStringLiteral("连接已断开，授权命令已取消"));
     } else {
@@ -102,18 +110,27 @@ bool MecanumJogClient::sendCommand(QString command) {
         emit commandFailed(QStringLiteral("请发送一条 1–79 字节的 ASCII 命令"));
         return false;
     }
+    const bool visionPause = command == QStringLiteral("vision pause");
     const bool stopping =
         command == QStringLiteral("stop") || command == QStringLiteral("X") ||
         command == QStringLiteral("x") ||
-        command == QStringLiteral("disable");
+        command == QStringLiteral("disable") || visionPause;
     if (stopping) {
+        missionSetupStage_ = 0;
+        missionSetupTimer_.stop();
         armTimer_.stop();
         pendingCommand_.clear();
-        invalidateNavigation();
-        invalidateMechanism();
-        setFullRouteRunning(false);
-        emit stopRequested();
-    } else if (!pendingCommand_.isEmpty()) {
+        if (visionPause) {
+            setVisionRunning(false);
+        } else {
+            invalidateNavigation();
+            invalidateMechanism();
+            setFullRouteRunning(false);
+            setVisionRunning(false);
+            emit stopRequested();
+        }
+    } else if ((!pendingCommand_.isEmpty() || missionSetupStage_ != 0) &&
+               !missionSetupDispatch_) {
         emit commandFailed(QStringLiteral("正在等待授权，请稍后发送；停止命令仍可使用"));
         return false;
     }
@@ -132,7 +149,8 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
         emit commandFailed(QStringLiteral("请发送一条 1–79 字节的 ASCII 命令"));
         return false;
     }
-    if (!pendingCommand_.isEmpty()) {
+    if (!pendingCommand_.isEmpty() ||
+        (missionSetupStage_ != 0 && !missionSetupDispatch_)) {
         emit commandFailed(QStringLiteral("已有命令正在等待授权"));
         return false;
     }
@@ -146,6 +164,8 @@ bool MecanumJogClient::sendArmedCommand(QString command) {
 }
 
 bool MecanumJogClient::emergencyStop() {
+    missionSetupStage_ = 0;
+    missionSetupTimer_.stop();
     armTimer_.stop();
     pendingCommand_.clear();
     invalidateNavigation();
@@ -207,6 +227,53 @@ bool MecanumJogClient::startFullRoute(int startZone, quint16 rpm) {
     return true;
 }
 
+bool MecanumJogClient::startRawPickRoute(int startZone, quint16 rpm) {
+    if ((startZone != 1 && startZone != 2) || rpm < 10 || rpm > 120) {
+        const QString error = QStringLiteral("路线取料要求启停区1/2、速度10～120 RPM");
+        emit fullRouteError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    if (!sendArmedCommand(
+            QStringLiteral("route rawpick %1 %2").arg(startZone).arg(rpm))) {
+        return false;
+    }
+    setFullRouteRunning(true);
+    return true;
+}
+
+bool MecanumJogClient::startMissionRoute(int startZone, quint16 rpm,
+                                         int forwardMilli, int rightMilli) {
+    if ((startZone != 1 && startZone != 2) || rpm < 10 || rpm > 120 ||
+        forwardMilli < 50 || forwardMilli > 2000 ||
+        rightMilli < 50 || rightMilli > 2000) {
+        const QString error = QStringLiteral("完整任务要求启停区1/2、速度10～120 RPM、视觉比例50～2000");
+        emit fullRouteError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    if (!connected_ || !mechanismInitialized_ || fullRouteRunning_ ||
+        missionSetupStage_ != 0 || !pendingCommand_.isEmpty()) {
+        const QString error = QStringLiteral("请先连接并确认机构初始姿态，等待其他命令完成");
+        emit fullRouteError(error);
+        emit commandFailed(error);
+        return false;
+    }
+    missionStartZone_ = startZone;
+    missionRpm_ = rpm;
+    missionForwardMilli_ = forwardMilli;
+    missionRightMilli_ = rightMilli;
+    missionSetupStage_ = 1;
+    dispatchMissionSetup(QStringLiteral("servo 2 70 1200"), false);
+    if (missionSetupStage_ == 0) return false;
+    setFullRouteRunning(true);
+    return true;
+}
+
+bool MecanumJogClient::continueRawPickRoute() {
+    return sendCommand(QStringLiteral("route next"));
+}
+
 bool MecanumJogClient::fullRouteRunning() const {
     return fullRouteRunning_;
 }
@@ -250,6 +317,64 @@ bool MecanumJogClient::mechanismInitialized() const {
     return mechanismInitialized_;
 }
 
+bool MecanumJogClient::startVisionMaterialPickup(int color) {
+    if (color < 1 || color > 6) {
+        emit commandFailed(QStringLiteral("物料颜色编号必须为 1～6"));
+        return false;
+    }
+    const bool started = sendArmedCommand(
+        QStringLiteral("vision pick material %1").arg(color));
+    if (started) setVisionRunning(true);
+    return started;
+}
+
+bool MecanumJogClient::startVisionRingAlignment(int ring) {
+    if (ring < 1 || ring > 3) {
+        emit commandFailed(QStringLiteral("圆环编号必须为 1～3"));
+        return false;
+    }
+    const bool started =
+        sendArmedCommand(QStringLiteral("vision align ring %1").arg(ring));
+    if (started) setVisionRunning(true);
+    return started;
+}
+
+bool MecanumJogClient::setVisionRingScale(int ring, int forwardMilli,
+                                          int rightMilli) {
+    if (ring < 1 || ring > 3 || forwardMilli < 50 || forwardMilli > 2000 ||
+        rightMilli < 50 || rightMilli > 2000) {
+        emit commandFailed(QStringLiteral("圆环比例超出范围"));
+        return false;
+    }
+    return sendArmedCommand(QStringLiteral("vision scale ring %1 %2 %3")
+                                .arg(ring).arg(forwardMilli).arg(rightMilli));
+}
+
+bool MecanumJogClient::pauseVision() {
+    return sendCommand(QStringLiteral("vision pause"));
+}
+
+bool MecanumJogClient::requestVisionStatus() {
+    return sendCommand(QStringLiteral("vision status"));
+}
+
+bool MecanumJogClient::jogVision(int forwardMm, int rightMm, int rpm) {
+    if ((forwardMm == 0 && rightMm == 0) || forwardMm < -20 ||
+        forwardMm > 20 || rightMm < -20 || rightMm > 20 || rpm < 10 ||
+        rpm > 30) {
+        emit commandFailed(QStringLiteral("视觉点动范围为每轴 ±20 mm、10～30 RPM"));
+        return false;
+    }
+    return sendArmedCommand(QStringLiteral("vision jog %1 %2 %3")
+                                .arg(forwardMm)
+                                .arg(rightMm)
+                                .arg(rpm));
+}
+
+bool MecanumJogClient::visionRunning() const {
+    return visionRunning_;
+}
+
 bool MecanumJogClient::validCommand(const QString &command) const {
     if (command.isEmpty() || command.size() > 79) {
         return false;
@@ -275,13 +400,78 @@ void MecanumJogClient::handleLine(const QString &line) {
         "^MECH (INIT|RUN|POS|DONE) h=(-?\\d+) l=(\\d+) t=(\\d+)$"));
     static const QRegularExpression routePositionExpression(QStringLiteral(
         "^ROUTE POS x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+) "
-        "state=(RUN|TURN) stage=([A-Z0-9_]+) target_x=(\\d+) target_y=(\\d+)$"));
+        "state=(RUN|TURN|WAIT) stage=([A-Z0-9_]+) target_x=(\\d+) target_y=(\\d+)$"));
     static const QRegularExpression routeStageExpression(
         QStringLiteral("^ROUTE STAGE index=(\\d+) name=([A-Z0-9_]+)$"));
     static const QRegularExpression routeDoneExpression(
         QStringLiteral("^ROUTE DONE x=(\\d+) y=(\\d+) yaw_cdeg=(-?\\d+)$"));
+    static const QRegularExpression rawPickExpression(QStringLiteral(
+        "^ROUTE RAWPICK state=([A-Z_]+) color=([1-6]) slot=([1-3])$"));
+    static const QRegularExpression missionExpression(QStringLiteral(
+        "^ROUTE MISSION phase=([A-Z_]+) station=([A-Z0-9_]+)$"));
+    static const QRegularExpression visionStateExpression(QStringLiteral(
+        "^VISION STATE state=([A-Z_]+) mode=([A-Z]+) selector=(\\d+) "
+        "target=(\\d+) iteration=(\\d+)$"));
+    static const QRegularExpression visionSampleExpression(QStringLiteral(
+        "^VISION SAMPLE token=(\\d+) du=(-?\\d+) dv=(-?\\d+) "
+        "forward_mm=(-?\\d+(?:\\.\\d+)?) right_mm=(-?\\d+(?:\\.\\d+)?) "
+        "quality=(\\d+) iteration=(\\d+)$"));
+    static const QRegularExpression visionDoneExpression(QStringLiteral(
+        "^VISION DONE forward_mm=(-?\\d+(?:\\.\\d+)?) "
+        "right_mm=(-?\\d+(?:\\.\\d+)?) iterations=(\\d+)$"));
 
     emit lineReceived(line);
+    if (missionSetupStage_ != 0) {
+        if (line.startsWith(QStringLiteral("STOP")) ||
+            line.startsWith(QStringLiteral("EMERGENCY STOP"))) {
+            missionSetupStage_ = 0;
+            missionSetupTimer_.stop();
+        } else if (line.startsWith(QStringLiteral("MECH INVALID")) ||
+                   line.startsWith(QStringLiteral("ROUTE INVALID"))) {
+            failMissionSetup(line);
+            return;
+        }
+    }
+    if (missionSetupStage_ != 0) {
+        if (line.startsWith(QStringLiteral("ERR")) ||
+            line.startsWith(QStringLiteral("VISION ERROR"))) {
+            failMissionSetup(line);
+            return;
+        }
+        if (missionSetupStage_ == 1 &&
+            (line.startsWith(QStringLiteral("DONE servo=2 angle=70")) ||
+             line.startsWith(QStringLiteral("OK servo=2 angle=70")))) {
+            missionSetupStage_ = 2;
+            dispatchMissionSetup(QStringLiteral("servo 3 26 1200"), false);
+            return;
+        }
+        if (missionSetupStage_ == 2 &&
+            (line.startsWith(QStringLiteral("DONE servo=3 angle=26")) ||
+             line.startsWith(QStringLiteral("OK servo=3 angle=26")))) {
+            missionSetupStage_ = 3;
+            dispatchMissionSetup(QStringLiteral("vision scale material %1 %2")
+                                     .arg(missionForwardMilli_)
+                                     .arg(missionRightMilli_), true);
+            return;
+        }
+        if (missionSetupStage_ == 3 &&
+            line == QStringLiteral("VISION SCALE material forward_milli=%1 right_milli=%2")
+                        .arg(missionForwardMilli_).arg(missionRightMilli_)) {
+            missionSetupStage_ = 4;
+            dispatchMissionSetup(QStringLiteral("vision scale ring 2 %1 %2")
+                                     .arg(missionForwardMilli_)
+                                     .arg(missionRightMilli_), true);
+            return;
+        }
+        if (missionSetupStage_ == 4 &&
+            line == QStringLiteral("VISION SCALE ring=2 forward_milli=%1 right_milli=%2")
+                        .arg(missionForwardMilli_).arg(missionRightMilli_)) {
+            missionSetupStage_ = 0;
+            missionSetupTimer_.stop();
+            sendArmedCommand(QStringLiteral("route mission %1 %2")
+                                 .arg(missionStartZone_).arg(missionRpm_));
+        }
+    }
     QRegularExpressionMatch match = initExpression.match(line);
     if (match.hasMatch()) {
         navigationInitialized_ = true;
@@ -352,16 +542,83 @@ void MecanumJogClient::handleLine(const QString &line) {
                                    match.captured(2));
         return;
     }
+    match = rawPickExpression.match(line);
+    if (match.hasMatch()) {
+        emit rawPickRouteStateChanged(match.captured(1),
+                                      match.captured(2).toInt(),
+                                      match.captured(3).toInt());
+        return;
+    }
+    match = missionExpression.match(line);
+    if (match.hasMatch()) {
+        emit missionPhaseChanged(match.captured(1), match.captured(2));
+        return;
+    }
+    if (line == QStringLiteral("ROUTE continuing")) {
+        emit rawPickRouteContinued();
+        return;
+    }
     match = routeDoneExpression.match(line);
     if (match.hasMatch()) {
-        setFullRouteRunning(false);
         emit fullRouteCompleted(match.captured(1).toInt(),
                                 match.captured(2).toInt());
+        setFullRouteRunning(false);
         return;
     }
     if (line.startsWith(QStringLiteral("ROUTE INVALID"))) {
-        setFullRouteRunning(false);
         emit fullRouteError(line);
+        setFullRouteRunning(false);
+        return;
+    }
+    static const QRegularExpression visionScaleExpression(QStringLiteral(
+        "^VISION SCALE ring=([1-3]) forward_milli=(\\d+) right_milli=(\\d+)$"));
+    match = visionScaleExpression.match(line);
+    if (match.hasMatch()) {
+        emit visionRingScaleApplied(match.captured(1).toInt(),
+                                    match.captured(2).toInt(),
+                                    match.captured(3).toInt());
+        return;
+    }
+    match = visionStateExpression.match(line);
+    if (match.hasMatch()) {
+        const QString state = match.captured(1);
+        setVisionRunning(state != QStringLiteral("IDLE") &&
+                         state != QStringLiteral("ALIGNED") &&
+                         state != QStringLiteral("FAILED") &&
+                         state != QStringLiteral("PAUSED") &&
+                         state != QStringLiteral("PICK_DONE"));
+        emit visionStateChanged(state);
+        return;
+    }
+    match = visionSampleExpression.match(line);
+    if (match.hasMatch()) {
+        emit visionSampleReceived(match.captured(2).toInt(),
+                                  match.captured(3).toInt(),
+                                  match.captured(4).toDouble(),
+                                  match.captured(5).toDouble(),
+                                  match.captured(6).toInt(),
+                                  match.captured(7).toInt());
+        return;
+    }
+    match = visionDoneExpression.match(line);
+    if (match.hasMatch()) {
+        setVisionRunning(false);
+        emit visionStateChanged(QStringLiteral("ALIGNED"));
+        emit visionCompleted(match.captured(1).toDouble(),
+                             match.captured(2).toDouble(),
+                             match.captured(3).toInt());
+        return;
+    }
+    if (line == QStringLiteral("VISION PAUSED")) {
+        setVisionRunning(false);
+        emit visionStateChanged(QStringLiteral("PAUSED"));
+        return;
+    }
+    if (line.startsWith(QStringLiteral("VISION ERROR"))) {
+        setVisionRunning(false);
+        emit visionStateChanged(QStringLiteral("FAILED"));
+        emit visionError(line);
+        if (!pendingCommand_.isEmpty()) failPending(line);
         return;
     }
     if (line.startsWith(QStringLiteral("ERR"))) {
@@ -376,8 +633,8 @@ void MecanumJogClient::handleLine(const QString &line) {
             emit mechanismError(line);
         }
         if (line.startsWith(QStringLiteral("ERR ROUTE:"))) {
-            setFullRouteRunning(false);
             emit fullRouteError(line);
+            setFullRouteRunning(false);
         }
         failPending(line);
         return;
@@ -389,6 +646,7 @@ void MecanumJogClient::handleLine(const QString &line) {
         invalidateNavigation();
         invalidateMechanism();
         setFullRouteRunning(false);
+        setVisionRunning(false);
         emit stopRequested();
         emit commandStateChanged(QStringLiteral("设备已停止：%1").arg(line));
         return;
@@ -437,13 +695,24 @@ void MecanumJogClient::setFullRouteRunning(bool running) {
     emit fullRouteRunningChanged(running);
 }
 
+void MecanumJogClient::setVisionRunning(bool running) {
+    if (visionRunning_ == running) return;
+    visionRunning_ = running;
+    emit visionRunningChanged(running);
+}
+
 void MecanumJogClient::failPending(const QString &reason) {
+    const bool missionSetupPending = missionSetupStage_ != 0;
     const bool navigationPending =
         pendingCommand_.startsWith(QStringLiteral("nav goto "));
     const bool mechanismPending =
         pendingCommand_.startsWith(QStringLiteral("mech pose "));
     const bool fullRoutePending =
-        pendingCommand_.startsWith(QStringLiteral("route auto "));
+        pendingCommand_.startsWith(QStringLiteral("route auto ")) ||
+        pendingCommand_.startsWith(QStringLiteral("route rawpick ")) ||
+        pendingCommand_.startsWith(QStringLiteral("route mission "));
+    const bool visionPending =
+        pendingCommand_.startsWith(QStringLiteral("vision "));
     armTimer_.stop();
     pendingCommand_.clear();
     if (navigationPending) {
@@ -453,9 +722,34 @@ void MecanumJogClient::failPending(const QString &reason) {
         emit mechanismError(reason);
     }
     if (fullRoutePending) {
-        setFullRouteRunning(false);
         emit fullRouteError(reason);
+        setFullRouteRunning(false);
+    }
+    if (visionPending) {
+        setVisionRunning(false);
+        emit visionError(reason);
     }
     emit commandFailed(reason);
     emit commandStateChanged(QStringLiteral("命令失败：%1").arg(reason));
+    if (missionSetupPending) failMissionSetup(reason);
+}
+
+void MecanumJogClient::dispatchMissionSetup(const QString &command, bool armed) {
+    missionSetupTimer_.start();
+    missionSetupDispatch_ = true;
+    const bool sent = armed ? sendArmedCommand(command) : sendCommand(command);
+    missionSetupDispatch_ = false;
+    if (!sent) failMissionSetup(QStringLiteral("任务启动准备命令发送失败"));
+}
+
+void MecanumJogClient::failMissionSetup(const QString &reason) {
+    if (missionSetupStage_ == 0) return;
+    missionSetupStage_ = 0;
+    missionSetupTimer_.stop();
+    armTimer_.stop();
+    pendingCommand_.clear();
+    emit fullRouteError(reason);
+    setFullRouteRunning(false);
+    emit commandFailed(reason);
+    if (connected_) sendCommand(QStringLiteral("stop"));
 }

@@ -28,7 +28,7 @@ namespace {
 
 static const QStringList kPages = {
     "总览", "场地定位", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
-    "临时调试", "动作录入", "串口终端", "视觉（预留）"
+    "临时调试", "动作录入", "串口终端", "视觉微调"
 };
 
 constexpr quint8 kDefaultTelemetryMask = 0x07;
@@ -127,7 +127,7 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("串口终端")) {
             terminalPage_ = new TerminalPage(pageStack_);
             page = terminalPage_;
-        } else if (pageName == QStringLiteral("视觉（预留）")) {
+        } else if (pageName == QStringLiteral("视觉微调")) {
             visionPage_ = new VisionPage(pageStack_);
             page = visionPage_;
         } else {
@@ -255,8 +255,33 @@ MainWindow::MainWindow(QWidget *parent)
             &mecanum_, &MecanumJogClient::navigateTo);
     connect(fieldPositionPage_, &FieldPositionPage::fullRouteRequested,
             &mecanum_, &MecanumJogClient::startFullRoute);
+    connect(fieldPositionPage_, &FieldPositionPage::rawPickRouteRequested,
+            &mecanum_, &MecanumJogClient::startRawPickRoute);
+    connect(fieldPositionPage_, &FieldPositionPage::missionRouteRequested,
+            this, [this](int zone, quint16 rpm) {
+                if (mechanismActionPage_->initialServoSetupRunning()) {
+                    fieldPositionPage_->setFullRouteError(
+                        QStringLiteral("请等待机构页初始舵机调整完成"));
+                    return;
+                }
+                mecanum_.startMissionRoute(zone, rpm,
+                    visionPage_->ring2ForwardMilli(),
+                    visionPage_->ring2RightMilli());
+            });
+    connect(fieldPositionPage_, &FieldPositionPage::rawPickRouteContinueRequested,
+            &mecanum_, &MecanumJogClient::continueRawPickRoute);
     connect(&mecanum_, &MecanumJogClient::fullRouteRunningChanged,
             fieldPositionPage_, &FieldPositionPage::setFullRouteRunning);
+    connect(&mecanum_, &MecanumJogClient::fullRouteRunningChanged, visionPage_,
+            &VisionPage::setOtherMotionRunning);
+    connect(&mecanum_, &MecanumJogClient::navigationEstimateReceived,
+            visionPage_, [this](qint32, qint32, double, const QString &state) {
+                visionPage_->setOtherMotionRunning(state != QStringLiteral("IDLE"));
+            });
+    connect(&mecanum_, &MecanumJogClient::mechanismEstimateReceived,
+            visionPage_, [this](MechanismPoseData, const QString &state) {
+                visionPage_->setOtherMotionRunning(state != QStringLiteral("IDLE"));
+            });
     connect(&mecanum_, &MecanumJogClient::fullRouteEstimateReceived,
             fieldPositionPage_, &FieldPositionPage::setFullRouteEstimate);
     connect(&mecanum_, &MecanumJogClient::fullRouteStageChanged,
@@ -265,6 +290,34 @@ MainWindow::MainWindow(QWidget *parent)
             fieldPositionPage_, &FieldPositionPage::setFullRouteCompleted);
     connect(&mecanum_, &MecanumJogClient::fullRouteError,
             fieldPositionPage_, &FieldPositionPage::setFullRouteError);
+    connect(&mecanum_, &MecanumJogClient::rawPickRouteStateChanged,
+            fieldPositionPage_, &FieldPositionPage::setRawPickRouteState);
+    connect(&mecanum_, &MecanumJogClient::rawPickRouteContinued,
+            fieldPositionPage_, &FieldPositionPage::setRawPickRouteContinued);
+    connect(&mecanum_, &MecanumJogClient::missionPhaseChanged,
+            fieldPositionPage_, &FieldPositionPage::setMissionPhase);
+    connect(visionPage_, &VisionPage::materialPickupRequested, &mecanum_,
+            &MecanumJogClient::startVisionMaterialPickup);
+    connect(visionPage_, &VisionPage::ringAlignmentRequested, &mecanum_,
+            &MecanumJogClient::startVisionRingAlignment);
+    connect(visionPage_, &VisionPage::ringScaleRequested, &mecanum_,
+            &MecanumJogClient::setVisionRingScale);
+    connect(&mecanum_, &MecanumJogClient::visionRingScaleApplied, visionPage_,
+            &VisionPage::setRingScaleApplied);
+    connect(visionPage_, &VisionPage::pauseRequested, &mecanum_,
+            &MecanumJogClient::pauseVision);
+    connect(visionPage_, &VisionPage::statusRequested, &mecanum_,
+            &MecanumJogClient::requestVisionStatus);
+    connect(visionPage_, &VisionPage::jogRequested, &mecanum_,
+            &MecanumJogClient::jogVision);
+    connect(&mecanum_, &MecanumJogClient::visionRunningChanged, visionPage_,
+            &VisionPage::setVisionRunning);
+    connect(&mecanum_, &MecanumJogClient::visionStateChanged, visionPage_,
+            &VisionPage::setVisionState);
+    connect(&mecanum_, &MecanumJogClient::visionSampleReceived, visionPage_,
+            &VisionPage::setVisionSample);
+    connect(&mecanum_, &MecanumJogClient::visionError, visionPage_,
+            &VisionPage::showVisionError);
     connect(mecanumPage_, &MecanumJogPage::commandRequested, &mecanum_,
             &MecanumJogClient::sendCommand);
     connect(mecanumPage_, &MecanumJogPage::armedCommandRequested, &mecanum_,
@@ -464,6 +517,8 @@ void MainWindow::handleSerialOpened() {
         mecanumPage_->setConnected(true);
         mechanismActionPage_->setEnabled(true);
         mechanismActionPage_->setConnected(true);
+        visionPage_->setEnabled(true);
+        visionPage_->setConnected(true);
         terminalPage_->setEnabled(true);
         terminalPage_->setConnected(true);
         emergencyStopButton_->setEnabled(true);
@@ -504,6 +559,8 @@ void MainWindow::handleSerialClosed() {
     mecanumPage_->setEnabled(false);
     mechanismActionPage_->setConnected(false);
     mechanismActionPage_->setEnabled(false);
+    visionPage_->setConnected(false);
+    visionPage_->setEnabled(false);
     fieldPositionPage_->setEnabled(true);
     fieldPositionPage_->setNavigationConnected(false);
     if (overviewPage_ != nullptr) {
@@ -597,12 +654,17 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
         mechanismActionPage_->setConnected(false);
         mechanismActionPage_->setEnabled(false);
     }
+    if (visionPage_ != nullptr) {
+        visionPage_->setConnected(false);
+        visionPage_->setEnabled(false);
+    }
     if (pageStack_ != nullptr) {
         for (int index = 1; index < pageStack_->count(); ++index) {
             if (pageStack_->widget(index) == fieldPositionPage_ ||
                 pageStack_->widget(index) == actionPage_ ||
                 pageStack_->widget(index) == mecanumPage_ ||
                 pageStack_->widget(index) == mechanismActionPage_ ||
+                pageStack_->widget(index) == visionPage_ ||
                 pageStack_->widget(index) == terminalPage_) {
                 continue;
             }

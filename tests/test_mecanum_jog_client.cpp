@@ -41,9 +41,15 @@ int main(int argc, char **argv) {
     QList<bool> mechanismValidity;
     QList<MechanismPoseData> mechanismCompletions;
     QStringList fullRouteStages;
+    QStringList rawPickStates;
+    QStringList missionPhases;
+    int rawPickContinued = 0;
     QList<bool> fullRouteRunning;
     QList<QPointF> fullRoutePositions;
     QList<QPointF> fullRouteCompletions;
+    QStringList visionStates;
+    QList<QPointF> visionCorrections;
+    QList<int> appliedScaleRings;
     QObject::connect(&client, &MecanumJogClient::bytesReady,
                      [&](QByteArray bytes) { transmitted.push_back(bytes); });
     QObject::connect(&client, &MecanumJogClient::lineReceived,
@@ -62,6 +68,18 @@ int main(int argc, char **argv) {
     QObject::connect(&client, &MecanumJogClient::navigationCompleted,
                      [&](qint32 xMm, qint32 yMm) {
                          navigationCompletions.push_back(QPointF(xMm, yMm));
+                     });
+    QObject::connect(&client, &MecanumJogClient::visionStateChanged,
+                     [&](QString state) { visionStates.push_back(state); });
+    QObject::connect(&client, &MecanumJogClient::visionRingScaleApplied,
+                     [&](int ring, int forwardMilli, int rightMilli) {
+                         if (forwardMilli == 640 && rightMilli == 673) {
+                             appliedScaleRings.push_back(ring);
+                         }
+                     });
+    QObject::connect(&client, &MecanumJogClient::visionSampleReceived,
+                     [&](int, int, double forwardMm, double rightMm, int, int) {
+                         visionCorrections.push_back(QPointF(forwardMm, rightMm));
                      });
     QObject::connect(
         &client, &MecanumJogClient::mechanismEstimateReceived,
@@ -82,6 +100,17 @@ int main(int argc, char **argv) {
                          fullRouteStages.push_back(
                              QStringLiteral("%1:%2").arg(index).arg(stage));
                      });
+    QObject::connect(&client, &MecanumJogClient::rawPickRouteStateChanged,
+                     [&](QString state, int color, int slot) {
+                         rawPickStates.push_back(
+                             QStringLiteral("%1:%2:%3").arg(state).arg(color).arg(slot));
+                     });
+    QObject::connect(&client, &MecanumJogClient::rawPickRouteContinued,
+                     [&] { ++rawPickContinued; });
+    QObject::connect(&client, &MecanumJogClient::missionPhaseChanged,
+                     [&](QString phase, QString station) {
+                         missionPhases.push_back(phase + QStringLiteral(":") + station);
+                     });
     QObject::connect(
         &client, &MecanumJogClient::fullRouteEstimateReceived,
         [&](qint32 x, qint32 y, double, QString, QString, qint32, qint32) {
@@ -93,6 +122,67 @@ int main(int argc, char **argv) {
                      });
 
     client.setConnected(true);
+    transmitted.clear();
+    if (!require(client.setVisionRingScale(2, 640, 673) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "ring scale did not require authorization")) return 1;
+    client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted.back() == QByteArray("vision scale ring 2 640 673\r\n"),
+                 "ring scale command is incorrect")) return 1;
+    client.ingestBytes(QByteArrayView(
+        "VISION SCALE ring=2 forward_milli=640 right_milli=673\r\n"));
+    if (!require(appliedScaleRings == QList<int>({2}) &&
+                     !client.setVisionRingScale(4, 640, 673),
+                 "ring scale confirmation or range check failed")) return 1;
+    transmitted.clear();
+    if (!require(client.startVisionRingAlignment(2) && client.pauseVision() &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n"),
+                                                        QByteArray("vision pause\r\n")}),
+                 "vision pause did not cancel pending authorization")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+    if (!require(!transmitted.contains(QByteArray("vision align ring 2\r\n")),
+                 "late authorization restarted a paused vision command")) {
+        return 1;
+    }
+    transmitted.clear();
+    if (!require(client.startVisionMaterialPickup(3) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "vision material pickup did not start authorization")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"
+        "VISION STATE state=WAIT mode=MATERIAL selector=3 target=0 iteration=0\r\n"
+        "VISION SAMPLE token=7 du=12 dv=-4 forward_mm=6 right_mm=2 quality=88 iteration=1\r\n"));
+    if (!require(transmitted.contains(QByteArray("vision pick material 3\r\n")) &&
+                     visionStates.back() == QStringLiteral("WAIT") &&
+                     visionCorrections.back() == QPointF(6, 2),
+                 "vision replies or command were not decoded")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView(
+        "VISION STATE state=PICK_DONE mode=MATERIAL selector=3 target=0 iteration=0\r\n"));
+    if (!require(!client.visionRunning() &&
+                     visionStates.back() == QStringLiteral("PICK_DONE"),
+                 "pickup completion was not decoded")) return 1;
+    transmitted.clear();
+    if (!require(client.pauseVision() &&
+                     transmitted == QList<QByteArray>({QByteArray("vision pause\r\n")}),
+                 "vision pause command is incorrect")) return 1;
+    client.ingestBytes(QByteArrayView("VISION PAUSED\r\n"));
+    transmitted.clear();
+    if (!require(client.jogVision(0, -20, 30) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "vision jog did not require authorization")) return 1;
+    client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted.back() == QByteArray("vision jog 0 -20 30\r\n"),
+                 "vision jog command is incorrect")) return 1;
+    if (!require(!client.jogVision(21, 0, 20) &&
+                     !client.startVisionRingAlignment(4),
+                 "invalid vision command was accepted")) return 1;
+
     transmitted.clear();
     if (!require(client.initializeNavigation(1) &&
                      transmitted == QList<QByteArray>({QByteArray("nav init 1\r\n")}),
@@ -209,6 +299,79 @@ int main(int argc, char **argv) {
                  "structured full-route replies were not decoded")) {
         return 1;
     }
+    transmitted.clear();
+    if (!require(client.startRawPickRoute(1, 40) &&
+                     transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
+                 "raw-pick route did not request authorization")) return 1;
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"
+        "ROUTE STAGE index=4 name=RAW_1\r\n"
+        "ROUTE RAWPICK state=WAIT_MATERIAL color=4 slot=1\r\n"
+        "ROUTE RAWPICK state=ITEM_DONE color=4 slot=1\r\n"
+        "ROUTE RAWPICK state=DONE color=6 slot=3\r\n"));
+    if (!require(transmitted ==
+                     QList<QByteArray>({QByteArray("arm\r\n"),
+                                        QByteArray("route rawpick 1 40\r\n")}) &&
+                     rawPickStates ==
+                         QStringList({QStringLiteral("WAIT_MATERIAL:4:1"),
+                                      QStringLiteral("ITEM_DONE:4:1"),
+                                      QStringLiteral("DONE:6:3")}) &&
+                     client.fullRouteRunning() &&
+                     client.continueRawPickRoute() &&
+                     transmitted.back() == QByteArray("route next\r\n"),
+                 "raw-pick route progress or continue command was incorrect")) {
+        return 1;
+    }
+    client.ingestBytes(QByteArrayView("ROUTE continuing\r\n"));
+    if (!require(rawPickContinued == 1,
+                 "raw-pick route continuation was not acknowledged")) return 1;
+    client.ingestBytes(QByteArrayView("ROUTE DONE x=2250 y=2250 yaw_cdeg=0\r\n"));
+    transmitted.clear();
+    if (!require(!client.startMissionRoute(2, 40, 720, 810) && transmitted.isEmpty(),
+                 "mission accepted an uninitialized mechanism")) return 1;
+    client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=2700\r\n"));
+    if (!require(client.startMissionRoute(2, 40, 720, 810) &&
+                     transmitted == QList<QByteArray>({QByteArray("servo 2 70 1200\r\n")}),
+                 "mission did not initialize the gripper")) return 1;
+    client.ingestBytes(QByteArrayView("DONE servo=2 angle=70\r\n"));
+    if (!require(transmitted.back() == QByteArray("servo 3 26 1200\r\n"),
+                 "mission did not initialize the platform")) return 1;
+    client.ingestBytes(QByteArrayView("DONE servo=3 angle=26\r\n"));
+    if (!require(transmitted.back() == QByteArray("arm\r\n"),
+                 "mission did not arm material calibration")) return 1;
+    client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted.back() == QByteArray("vision scale material 720 810\r\n"),
+                 "mission material calibration is incorrect")) return 1;
+    client.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=720 right_milli=810\r\n"));
+    if (!require(transmitted.back() == QByteArray("arm\r\n"),
+                 "mission did not arm ring calibration")) return 1;
+    client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted.back() == QByteArray("vision scale ring 2 720 810\r\n"),
+                 "mission ring calibration is incorrect")) return 1;
+    client.ingestBytes(QByteArrayView("VISION SCALE ring=2 forward_milli=720 right_milli=810\r\n"));
+    if (!require(transmitted.back() == QByteArray("arm\r\n"),
+                 "mission did not arm route after setup")) return 1;
+    client.ingestBytes(QByteArrayView(
+        "ARMED for one enable or motion command\r\n"
+        "ROUTE MISSION phase=QR_WAIT station=QR\r\n"
+        "ROUTE MISSION phase=TEMP_ALIGN station=TEMP_1\r\n"));
+    if (!require(transmitted.back() == QByteArray("route mission 2 40\r\n") &&
+                     missionPhases == QStringList({QStringLiteral("QR_WAIT:QR"),
+                                                  QStringLiteral("TEMP_ALIGN:TEMP_1")}) &&
+                     client.fullRouteRunning(),
+                 "mission command or phase parsing is incorrect")) return 1;
+    client.ingestBytes(QByteArrayView("ROUTE INVALID reason=mission_vision\r\n"));
+    if (!require(!client.fullRouteRunning(),
+                 "mission failure did not clear running state")) return 1;
+    transmitted.clear();
+    if (!require(client.startMissionRoute(1, 40),
+                 "mission restart handshake was rejected")) return 1;
+    client.ingestBytes(QByteArrayView("ERR servo: 2..4\r\n"));
+    if (!require(!client.fullRouteRunning(),
+                 "mission start rejection did not restore idle state")) return 1;
+    client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=2700\r\n"));
+    if (!require(client.startMissionRoute(1, 40),
+                 "mission setup for stop test was rejected")) return 1;
     lines.clear();
     transmitted.clear();
     if (!require(client.emergencyStop() &&
@@ -216,6 +379,10 @@ int main(int argc, char **argv) {
                  "emergency stop was not emitted as one raw byte")) {
         return 1;
     }
+    client.ingestBytes(QByteArrayView("DONE servo=2 angle=70\r\n"));
+    if (!require(transmitted == QList<QByteArray>({QByteArray("!")}),
+                 "mission setup continued after emergency stop")) return 1;
+    lines.clear();
     transmitted.clear();
     client.ingestBytes(QByteArrayView("OK first\r"));
     client.ingestBytes(QByteArrayView("\nERR second\r\n"));

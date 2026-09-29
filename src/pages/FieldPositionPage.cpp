@@ -34,11 +34,19 @@ const QPointF kNavigationPoints[] = {
 QString routeStageText(const QString &stage) {
     if (stage == QStringLiteral("QR")) return QStringLiteral("二维码区");
     if (stage == QStringLiteral("RAW_1")) return QStringLiteral("原料区（第一轮）");
-    if (stage == QStringLiteral("COARSE_1")) return QStringLiteral("粗加工区（第一轮）");
-    if (stage == QStringLiteral("TEMP_1")) return QStringLiteral("暂存区（第一轮）");
+    if (stage == QStringLiteral("COARSE_1") ||
+        stage == QStringLiteral("COARSE_1_DROP_PICK"))
+        return QStringLiteral("粗加工区（第一轮）");
+    if (stage == QStringLiteral("TEMP_1") ||
+        stage == QStringLiteral("TEMP_1_DROP"))
+        return QStringLiteral("暂存区（第一轮）");
     if (stage == QStringLiteral("RAW_2")) return QStringLiteral("原料区（第二轮）");
-    if (stage == QStringLiteral("COARSE_2")) return QStringLiteral("粗加工区（第二轮）");
-    if (stage == QStringLiteral("TEMP_2")) return QStringLiteral("暂存区（第二轮）");
+    if (stage == QStringLiteral("COARSE_2") ||
+        stage == QStringLiteral("COARSE_2_DROP_PICK"))
+        return QStringLiteral("粗加工区（第二轮）");
+    if (stage == QStringLiteral("TEMP_2") ||
+        stage == QStringLiteral("TEMP_2_STACK"))
+        return QStringLiteral("暂存区（第二轮）");
     if (stage == QStringLiteral("HOME")) return QStringLiteral("返回启停区");
     return QStringLiteral("通道行驶");
 }
@@ -319,7 +327,7 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     coordinateLayout->addRow(coordinateMoveButton_);
     navigationLayout->addWidget(coordinateGroup);
 
-    auto *fullRouteGroup = new QGroupBox(QStringLiteral("完整跑图（仅底盘）"),
+    auto *fullRouteGroup = new QGroupBox(QStringLiteral("路线联调"),
                                           navigationControlGroup_);
     auto *fullRouteLayout = new QFormLayout(fullRouteGroup);
     fullRouteZoneCombo_ = new QComboBox(fullRouteGroup);
@@ -332,16 +340,36 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     fullRouteRpmSpin_->setSingleStep(10);
     fullRouteRpmSpin_->setValue(60);
     fullRouteRpmSpin_->setSuffix(QStringLiteral(" RPM"));
-    fullRouteStartButton_ = new QPushButton(QStringLiteral("开始完整跑图"),
+    fullRouteStartButton_ = new QPushButton(QStringLiteral("开始完整跑图（仅底盘）"),
                                             fullRouteGroup);
     fullRouteStartButton_->setObjectName(QStringLiteral("fullRouteStartButton"));
     fullRouteStatusLabel_ = new QLabel(QStringLiteral("状态：待命"), fullRouteGroup);
     fullRouteStatusLabel_->setObjectName(QStringLiteral("fullRouteStatusLabel"));
     fullRouteStatusLabel_->setWordWrap(true);
+    rawPickStartButton_ = new QPushButton(QStringLiteral("路线取料联调（RAW_1 三件）"),
+                                          fullRouteGroup);
+    rawPickStartButton_->setObjectName(QStringLiteral("rawPickStartButton"));
+    missionStartButton_ = new QPushButton(QStringLiteral("开始两轮完整取放"),
+                                          fullRouteGroup);
+    missionStartButton_->setObjectName(QStringLiteral("missionStartButton"));
+    rawPickContinueButton_ = new QPushButton(QStringLiteral("确认并继续路线"),
+                                             fullRouteGroup);
+    rawPickContinueButton_->setObjectName(QStringLiteral("rawPickContinueButton"));
+    rawPickStatusLabel_ = new QLabel(QStringLiteral("取料：待命"), fullRouteGroup);
+    rawPickStatusLabel_->setObjectName(QStringLiteral("rawPickStatusLabel"));
+    rawPickStatusLabel_->setWordWrap(true);
+    missionStatusLabel_ = new QLabel(QStringLiteral("任务：待命"), fullRouteGroup);
+    missionStatusLabel_->setObjectName(QStringLiteral("missionStatusLabel"));
+    missionStatusLabel_->setWordWrap(true);
     fullRouteLayout->addRow(QStringLiteral("起点"), fullRouteZoneCombo_);
     fullRouteLayout->addRow(QStringLiteral("速度"), fullRouteRpmSpin_);
     fullRouteLayout->addRow(fullRouteStartButton_);
+    fullRouteLayout->addRow(rawPickStartButton_);
+    fullRouteLayout->addRow(missionStartButton_);
+    fullRouteLayout->addRow(rawPickContinueButton_);
     fullRouteLayout->addRow(fullRouteStatusLabel_);
+    fullRouteLayout->addRow(rawPickStatusLabel_);
+    fullRouteLayout->addRow(missionStatusLabel_);
     navigationLayout->addWidget(fullRouteGroup);
     navigationControlGroup_->hide();
     panel->addWidget(navigationControlGroup_);
@@ -457,12 +485,60 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
             return;
         }
         fullRouteRunning_ = true;
+        missionRunning_ = false;
         navigationRunning_ = false;
         navigationInitialized_ = false;
         fullRouteStatusLabel_->setText(QStringLiteral("状态：等待路线启动"));
         refreshNavigationControls();
         emit fullRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
                                 static_cast<quint16>(fullRouteRpmSpin_->value()));
+    });
+    connect(rawPickStartButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(
+                this, QStringLiteral("确认路线取料联调"),
+                QStringLiteral("请确认机构已在初始姿态并执行初始化，绿、黄、浅蓝会依次放入固定抓取位。\n"
+                               "RAW_1 到站后底盘停车；确认急停可用、人员已离开行驶区域。"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
+            QMessageBox::Yes) {
+            return;
+        }
+        fullRouteRunning_ = true;
+        missionRunning_ = false;
+        rawPickReady_ = false;
+        navigationRunning_ = false;
+        navigationInitialized_ = false;
+        rawPickStatusLabel_->setText(QStringLiteral("取料：等待到达 RAW_1"));
+        refreshNavigationControls();
+        emit rawPickRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
+                                   static_cast<quint16>(fullRouteRpmSpin_->value()));
+    });
+    connect(missionStartButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(
+                this, QStringLiteral("确认两轮取放"),
+                QStringLiteral("确认机构初始姿态，电机方向、限位、急停及各工位动作已分段实测。\n"
+                               "启动时将自动指令夹爪70°、平台26°，并应用视觉页圆环2比例到物料和圆环2。\n"
+                               "启动后二维码点停留1秒，并自动执行两轮取放。"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
+            QMessageBox::Yes) return;
+        fullRouteRunning_ = missionRunning_ = true;
+        rawPickReady_ = false;
+        navigationRunning_ = navigationInitialized_ = false;
+        missionStatusLabel_->setText(QStringLiteral("任务：等待启动"));
+        refreshNavigationControls();
+        emit missionRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
+                                   static_cast<quint16>(fullRouteRpmSpin_->value()));
+    });
+    connect(rawPickContinueButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(
+                this, QStringLiteral("确认继续路线"),
+                QStringLiteral("请确认三件物料已在平台上、机械臂已收回，人员已离开车辆路径。\n"
+                               "继续后将按现有路线经过后续作业点，不执行加工或放置。"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
+            QMessageBox::Yes) {
+            return;
+        }
+        emit rawPickRouteContinueRequested();
+        rawPickStatusLabel_->setText(QStringLiteral("取料：已请求继续路线，等待主控确认"));
     });
     connect(serialPanel_, &SerialDebugPanel::rawSendRequested, this,
             &FieldPositionPage::rawSendRequested);
@@ -553,6 +629,7 @@ void FieldPositionPage::setNavigationMode(bool enabled) {
     navigationTargetValid_ = false;
     navigationRunning_ = false;
     fullRouteRunning_ = false;
+    rawPickReady_ = false;
     noticeLabel_->setText(
         enabled
             ? QStringLiteral("指定坐标仅沿静态安全通道移动；障碍或净空不足会被拒绝。位置来自命令积分估计，不是真实定位。")
@@ -568,6 +645,7 @@ void FieldPositionPage::setNavigationConnected(bool connected) {
     navigationConnected_ = connected;
     if (!connected) {
         fullRouteRunning_ = false;
+        rawPickReady_ = false;
         setNavigationInitialized(false);
     }
     refreshNavigationControls();
@@ -628,6 +706,13 @@ void FieldPositionPage::setNavigationError(const QString &message) {
 
 void FieldPositionPage::setFullRouteRunning(bool running) {
     fullRouteRunning_ = running;
+    if (!running) {
+        rawPickReady_ = false;
+        if (missionRunning_) {
+            missionStatusLabel_->setText(QStringLiteral("任务：已停止或连接断开"));
+            missionRunning_ = false;
+        }
+    }
     if (!running && fullRouteStatusLabel_->text().contains(QStringLiteral("运行"))) {
         fullRouteStatusLabel_->setText(QStringLiteral("状态：已停止"));
     }
@@ -656,7 +741,9 @@ void FieldPositionPage::setFullRouteEstimate(qint32 xMm, qint32 yMm,
         QStringLiteral("状态：%1，%2").arg(routeStageText(stage),
                                            state == QStringLiteral("TURN")
                                                ? QStringLiteral("转向中")
-                                               : QStringLiteral("移动中")));
+                                               : state == QStringLiteral("WAIT")
+                                                     ? QStringLiteral("停车等待")
+                                                     : QStringLiteral("移动中")));
     fullRouteRunning_ = true;
     refreshStatus();
     refreshNavigationControls();
@@ -669,6 +756,9 @@ void FieldPositionPage::setFullRouteStage(int index, const QString &stage) {
 
 void FieldPositionPage::setFullRouteCompleted(qint32 xMm, qint32 yMm) {
     fullRouteRunning_ = false;
+    if (missionRunning_) missionStatusLabel_->setText(QStringLiteral("任务：已返回启停区"));
+    missionRunning_ = false;
+    rawPickReady_ = false;
     map_->setTargetPoint(QPointF(xMm, yMm), true);
     fullRouteStatusLabel_->setText(
         QStringLiteral("状态：完整跑图完成（x=%1 mm，y=%2 mm）").arg(xMm).arg(yMm));
@@ -678,8 +768,76 @@ void FieldPositionPage::setFullRouteCompleted(qint32 xMm, qint32 yMm) {
 
 void FieldPositionPage::setFullRouteError(const QString &message) {
     fullRouteRunning_ = false;
+    if (missionRunning_) missionStatusLabel_->setText(QStringLiteral("任务：已中止：%1").arg(message));
+    missionRunning_ = false;
+    rawPickReady_ = false;
     fullRouteStatusLabel_->setText(QStringLiteral("状态：错误：%1").arg(message));
+    rawPickStatusLabel_->setText(QStringLiteral("取料：错误：%1").arg(message));
     refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setRawPickRouteState(const QString &state, int color,
+                                              int slot) {
+    const QString colorName = color == 4 ? QStringLiteral("绿") :
+                              color == 2 ? QStringLiteral("黄") :
+                              color == 6 ? QStringLiteral("浅蓝") :
+                                           QString::number(color);
+    if (state == QStringLiteral("DONE")) {
+        rawPickReady_ = !missionRunning_;
+        rawPickStatusLabel_->setText(
+            missionRunning_ ? QStringLiteral("取料：三件动作完成，任务自动继续") :
+                              QStringLiteral("取料：三件动作完成，检查物料后点击“确认并继续路线”"));
+    } else {
+        const QString action = state == QStringLiteral("WAIT_MATERIAL") ?
+                                   QStringLiteral("等待补料") :
+                               state == QStringLiteral("PREP") ?
+                                   QStringLiteral("收回水平轴") :
+                               state == QStringLiteral("DETECT") ?
+                                   QStringLiteral("识别中") :
+                               state == QStringLiteral("PICK") ?
+                                   QStringLiteral("夹取中") :
+                               state == QStringLiteral("ITEM_DONE") ?
+                                   QStringLiteral("本件动作完成") :
+                                   QStringLiteral("错误");
+        rawPickStatusLabel_->setText(
+            QStringLiteral("取料：%1，%2，平台第 %3 槽")
+                .arg(action, colorName).arg(slot));
+        if (state == QStringLiteral("ERROR")) rawPickReady_ = false;
+    }
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setMissionPhase(const QString &phase,
+                                        const QString &station) {
+    const QString action = phase == QStringLiteral("QR_WAIT") ?
+                               QStringLiteral("停车等待1秒") :
+                           phase == QStringLiteral("RAW_PICK") ?
+                               QStringLiteral("按颜色取料") :
+                           phase == QStringLiteral("RING_PREP") ?
+                               QStringLiteral("水平轴收至-500") :
+                           phase == QStringLiteral("RING_ALIGN") ?
+                               QStringLiteral("对齐圆环2") :
+                           phase == QStringLiteral("TEMP_ALIGN") ?
+                               QStringLiteral("暂存区对齐圆环2") :
+                           phase == QStringLiteral("COARSE_PLACE") ?
+                               QStringLiteral("放入粗加工区") :
+                           phase == QStringLiteral("COARSE_PICK") ?
+                               QStringLiteral("从粗加工区取回") :
+                           phase == QStringLiteral("TEMP_PLACE") ?
+                               QStringLiteral("暂存区放置") :
+                           phase == QStringLiteral("RECENTER") ?
+                               QStringLiteral("返回工位停车点") :
+                           phase == QStringLiteral("CONTINUE") ?
+                               QStringLiteral("继续行驶") : phase;
+    missionStatusLabel_->setText(
+        QStringLiteral("任务：%1，%2").arg(routeStageText(station), action));
+}
+
+void FieldPositionPage::setRawPickRouteContinued() {
+    if (!rawPickReady_) return;
+    rawPickReady_ = false;
+    rawPickStatusLabel_->setText(QStringLiteral("取料：已确认，路线继续"));
     refreshNavigationControls();
 }
 
@@ -694,6 +852,15 @@ void FieldPositionPage::refreshNavigationControls() {
     fullRouteStartButton_->setEnabled(
         navigationMode_ && navigationConnected_ && !navigationRunning_ &&
         !fullRouteRunning_);
+    rawPickStartButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && !navigationRunning_ &&
+        !fullRouteRunning_);
+    missionStartButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && !navigationRunning_ &&
+        !fullRouteRunning_);
+    rawPickContinueButton_->setEnabled(
+        navigationMode_ && navigationConnected_ && fullRouteRunning_ &&
+        rawPickReady_);
 }
 
 QPointF FieldPositionPage::nearestNavigationPoint(QPointF fieldPoint) const {

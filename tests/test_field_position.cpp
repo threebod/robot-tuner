@@ -109,6 +109,11 @@ int main(int argc, char **argv) {
     auto *fullRouteRpm = page.findChild<QSpinBox *>("fullRouteRpmSpin");
     auto *fullRouteStart = page.findChild<QPushButton *>("fullRouteStartButton");
     auto *fullRouteStatus = page.findChild<QLabel *>("fullRouteStatusLabel");
+    auto *rawPickStart = page.findChild<QPushButton *>("rawPickStartButton");
+    auto *missionStart = page.findChild<QPushButton *>("missionStartButton");
+    auto *missionStatus = page.findChild<QLabel *>("missionStatusLabel");
+    auto *rawPickContinue = page.findChild<QPushButton *>("rawPickContinueButton");
+    auto *rawPickStatus = page.findChild<QLabel *>("rawPickStatusLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
                      source && status && updated && map && simulation->isChecked() &&
                      splitter && splitter->orientation() == Qt::Vertical &&
@@ -117,7 +122,9 @@ int main(int argc, char **argv) {
                      navigationControls && navInit1 && navMove && navRpm && navTarget &&
                      navState && coordinateX && coordinateY && coordinateRpm &&
                      coordinateMove && fullRouteZone && fullRouteRpm &&
-                     fullRouteStart && fullRouteStatus &&
+                     fullRouteStart && fullRouteStatus && rawPickStart &&
+                     rawPickContinue && rawPickStatus && missionStart &&
+                     missionStatus &&
                      navigationControls->isHidden(),
                  "field position page controls are incomplete")) {
         return 1;
@@ -214,6 +221,11 @@ int main(int argc, char **argv) {
     quint16 requestedRpm = 0;
     int fullRouteZoneRequested = 0;
     quint16 fullRouteRpmRequested = 0;
+    int rawPickZoneRequested = 0;
+    quint16 rawPickRpmRequested = 0;
+    int rawPickContinueRequested = 0;
+    int missionZoneRequested = 0;
+    quint16 missionRpmRequested = 0;
     QObject::connect(&page, &FieldPositionPage::navigationInitRequested,
                      [&](int zone) { initializedZone = zone; });
     QObject::connect(&page, &FieldPositionPage::navigationTargetRequested,
@@ -225,6 +237,18 @@ int main(int argc, char **argv) {
                      [&](int zone, quint16 rpm) {
                          fullRouteZoneRequested = zone;
                          fullRouteRpmRequested = rpm;
+                     });
+    QObject::connect(&page, &FieldPositionPage::rawPickRouteRequested,
+                     [&](int zone, quint16 rpm) {
+                         rawPickZoneRequested = zone;
+                         rawPickRpmRequested = rpm;
+                     });
+    QObject::connect(&page, &FieldPositionPage::rawPickRouteContinueRequested,
+                     [&] { ++rawPickContinueRequested; });
+    QObject::connect(&page, &FieldPositionPage::missionRouteRequested,
+                     [&](int zone, quint16 rpm) {
+                         missionZoneRequested = zone;
+                         missionRpmRequested = rpm;
                      });
     page.setNavigationMode(true);
     page.setNavigationConnected(true);
@@ -296,6 +320,48 @@ int main(int argc, char **argv) {
                  "full route completion did not restore controls")) {
         return 1;
     }
+    acceptNextConfirmation();
+    rawPickStart->click();
+    page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 4, 1);
+    if (!require(rawPickZoneRequested == 2 && rawPickRpmRequested == 100 &&
+                     !rawPickContinue->isEnabled() &&
+                     rawPickStatus->text().contains(QStringLiteral("绿")),
+                 "raw-pick route start or wait status is incorrect")) return 1;
+    page.setRawPickRouteState(QStringLiteral("DONE"), 6, 3);
+    if (!require(rawPickContinue->isEnabled() &&
+                     rawPickStatus->text().contains(QStringLiteral("三件")),
+                 "raw-pick route did not wait for human confirmation")) return 1;
+    acceptNextConfirmation();
+    rawPickContinue->click();
+    if (!require(rawPickContinueRequested == 1 &&
+                     rawPickContinue->isEnabled(),
+                 "raw-pick continuation was disabled before controller acknowledgement")) return 1;
+    page.setRawPickRouteContinued();
+    if (!require(!rawPickContinue->isEnabled(),
+                 "raw-pick continuation acknowledgement did not close the gate")) return 1;
+    page.setFullRouteRunning(false);
+    acceptNextConfirmation();
+    missionStart->click();
+    page.setMissionPhase(QStringLiteral("QR_WAIT"), QStringLiteral("QR"));
+    page.setRawPickRouteState(QStringLiteral("DONE"), 6, 3);
+    if (!require(missionZoneRequested == 2 && missionRpmRequested == 100 &&
+                     !missionStart->isEnabled() && !rawPickContinue->isEnabled() &&
+                     missionStatus->text().contains(QStringLiteral("二维码区")) &&
+                     rawPickStatus->text().contains(QStringLiteral("自动继续")),
+                 "mission start or automatic station status is incorrect")) return 1;
+    page.setMissionPhase(QStringLiteral("RING_PREP"), QStringLiteral("COARSE_1"));
+    if (!require(missionStatus->text().contains(QStringLiteral("水平轴收至-500")),
+                 "ring preparation was not shown")) return 1;
+    page.setFullRouteCompleted(2250, 150);
+    if (!require(missionStart->isEnabled() &&
+                     missionStatus->text().contains(QStringLiteral("已返回")),
+                 "mission completion did not restore controls")) return 1;
+    acceptNextConfirmation();
+    missionStart->click();
+    page.setFullRouteRunning(false);
+    if (!require(missionStart->isEnabled() &&
+                     missionStatus->text().contains(QStringLiteral("已停止")),
+                 "mission disconnect did not restore idle status")) return 1;
     page.setNavigationInitialized(false);
     if (!require(!navMove->isEnabled() &&
                      navState->text().contains(QStringLiteral("重新初始化")) &&

@@ -13,16 +13,18 @@ struct MechanismPoseData {
     int horizontalAccel{50};
     int liftRpm{30};
     int liftAccel{50};
-    int turretDps10{130};
+    int turretDps10{1200};
 };
 
 struct MechanismInitialData {
     MechanismPoseData pose;
     bool gripperOpen{true};
     int platform{1};
-    int gripperOpenDeg{45};
-    int gripperCloseDeg{6};
-    std::array<int, 3> platformDeg{20, 139, 256};
+    int gripperOpenDeg{70};
+    int gripperCloseDeg{35};
+    int gripperDps10{1200};
+    int platformDps10{1200};
+    std::array<int, 3> platformDeg{26, 146, 264};
 };
 
 enum class MechanismStepType { Pose, Gripper, Platform, Servo, Wait };
@@ -39,6 +41,8 @@ struct MechanismSequence {
     QString name{QStringLiteral("mechanism_action")};
     MechanismInitialData initial;
     QVector<MechanismStep> steps;
+    bool loopEnabled{};
+    int loopCount{2};
 };
 
 bool validateMechanismSequence(const MechanismSequence &sequence,

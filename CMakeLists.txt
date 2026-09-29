@@ -219,6 +219,14 @@ add_executable(test_mecanum_jog_page
 target_include_directories(test_mecanum_jog_page PRIVATE src)
 target_link_libraries(test_mecanum_jog_page PRIVATE Qt6::Widgets)
 
+add_executable(test_vision_page
+    tests/test_vision_page.cpp
+    src/pages/VisionPage.cpp
+    src/pages/VisionPage.h
+)
+target_include_directories(test_vision_page PRIVATE src)
+target_link_libraries(test_vision_page PRIVATE Qt6::Widgets)
+
 add_executable(test_mechanism_action_model
     tests/test_mechanism_action_model.cpp
     src/device/MechanismActionModel.cpp
@@ -395,10 +403,13 @@ add_executable(test_mecanum_can
     ${MECANUM_JOG_DIR}/tests/test_can.c
     ${MECANUM_JOG_DIR}/jog_can.c
 )
+add_executable(test_mecanum_vision
+    ${MECANUM_JOG_DIR}/tests/test_vision.c
+)
 target_include_directories(test_mecanum_can PRIVATE
     ${MECANUM_JOG_DIR}/tests/stubs
 )
-foreach(target test_mecanum_straight test_mecanum_route test_mecanum_navigation test_mecanum_mechanism_action test_mecanum_can)
+foreach(target test_mecanum_straight test_mecanum_route test_mecanum_navigation test_mecanum_mechanism_action test_mecanum_can test_mecanum_vision)
     set_target_properties(${target} PROPERTIES
         AUTOMOC OFF
         C_STANDARD 99
@@ -448,6 +459,11 @@ set_tests_properties(test_mecanum_jog_page PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
 )
+add_test(NAME test_vision_page COMMAND test_vision_page)
+set_tests_properties(test_vision_page PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
 add_test(NAME test_mechanism_action_model COMMAND test_mechanism_action_model)
 set_tests_properties(test_mechanism_action_model PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
@@ -489,6 +505,10 @@ add_test(NAME test_mecanum_route COMMAND test_mecanum_route)
 add_test(NAME test_mecanum_navigation COMMAND test_mecanum_navigation)
 add_test(NAME test_mecanum_mechanism_action COMMAND test_mecanum_mechanism_action)
 add_test(NAME test_mecanum_can COMMAND test_mecanum_can)
+add_test(NAME test_mecanum_vision COMMAND test_mecanum_vision)
 add_test(NAME test_mecanum_route_runtime
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
             ${MECANUM_JOG_DIR}/tests/test_route_runtime.ps1)
+add_test(NAME test_mecanum_mechanism_action_runtime
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+            ${MECANUM_JOG_DIR}/tests/test_mechanism_action_runtime.ps1)
