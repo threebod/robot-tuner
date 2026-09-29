@@ -296,6 +296,8 @@ MainWindow::MainWindow(QWidget *parent)
             fieldPositionPage_, &FieldPositionPage::setRawPickRouteContinued);
     connect(&mecanum_, &MecanumJogClient::missionPhaseChanged,
             fieldPositionPage_, &FieldPositionPage::setMissionPhase);
+    connect(&mecanum_, &MecanumJogClient::qrResultReceived,
+            fieldPositionPage_, &FieldPositionPage::setQrResult);
     connect(visionPage_, &VisionPage::materialPickupRequested, &mecanum_,
             &MecanumJogClient::startVisionMaterialPickup);
     connect(visionPage_, &VisionPage::ringAlignmentRequested, &mecanum_,

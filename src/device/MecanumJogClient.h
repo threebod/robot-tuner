@@ -62,6 +62,7 @@ signals:
     void rawPickRouteStateChanged(QString state, int color, int slot);
     void rawPickRouteContinued();
     void missionPhaseChanged(QString phase, QString station);
+    void qrResultReceived(QString value);
     void mechanismEstimateReceived(MechanismPoseData pose, QString state);
     void mechanismValidityChanged(bool initialized);
     void mechanismCompleted(MechanismPoseData pose);

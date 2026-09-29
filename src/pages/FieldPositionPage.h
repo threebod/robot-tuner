@@ -76,6 +76,7 @@ public:
     void setRawPickRouteState(const QString &state, int color, int slot);
     void setRawPickRouteContinued();
     void setMissionPhase(const QString &phase, const QString &station);
+    void setQrResult(const QString &value);
 
 public slots:
     void selectFieldPoint(QPointF fieldPoint);
@@ -133,6 +134,7 @@ private:
     QPushButton *rawPickContinueButton_{};
     QLabel *rawPickStatusLabel_{};
     QLabel *missionStatusLabel_{};
+    QLabel *qrResultLabel_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;

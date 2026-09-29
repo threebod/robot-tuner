@@ -361,6 +361,10 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     missionStatusLabel_ = new QLabel(QStringLiteral("任务：待命"), fullRouteGroup);
     missionStatusLabel_->setObjectName(QStringLiteral("missionStatusLabel"));
     missionStatusLabel_->setWordWrap(true);
+    qrResultLabel_ = new QLabel(QStringLiteral("扫码：等待结果"), fullRouteGroup);
+    qrResultLabel_->setObjectName(QStringLiteral("qrResultLabel"));
+    qrResultLabel_->setTextFormat(Qt::PlainText);
+    qrResultLabel_->setWordWrap(true);
     fullRouteLayout->addRow(QStringLiteral("起点"), fullRouteZoneCombo_);
     fullRouteLayout->addRow(QStringLiteral("速度"), fullRouteRpmSpin_);
     fullRouteLayout->addRow(fullRouteStartButton_);
@@ -370,6 +374,7 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     fullRouteLayout->addRow(fullRouteStatusLabel_);
     fullRouteLayout->addRow(rawPickStatusLabel_);
     fullRouteLayout->addRow(missionStatusLabel_);
+    fullRouteLayout->addRow(qrResultLabel_);
     navigationLayout->addWidget(fullRouteGroup);
     navigationControlGroup_->hide();
     panel->addWidget(navigationControlGroup_);
@@ -517,13 +522,14 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
                 this, QStringLiteral("确认两轮取放"),
                 QStringLiteral("确认机构初始姿态，电机方向、限位、急停及各工位动作已分段实测。\n"
                                "启动时将自动指令夹爪70°、平台26°，并应用视觉页圆环2比例到物料和圆环2。\n"
-                               "启动后二维码点停留1秒，并自动执行两轮取放。"),
+                               "启动后二维码点停留1秒，扫码结果仅显示，并自动执行两轮取放。"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
             QMessageBox::Yes) return;
         fullRouteRunning_ = missionRunning_ = true;
         rawPickReady_ = false;
         navigationRunning_ = navigationInitialized_ = false;
         missionStatusLabel_->setText(QStringLiteral("任务：等待启动"));
+        qrResultLabel_->setText(QStringLiteral("扫码：等待结果"));
         refreshNavigationControls();
         emit missionRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
                                    static_cast<quint16>(fullRouteRpmSpin_->value()));
@@ -832,6 +838,10 @@ void FieldPositionPage::setMissionPhase(const QString &phase,
                                QStringLiteral("继续行驶") : phase;
     missionStatusLabel_->setText(
         QStringLiteral("任务：%1，%2").arg(routeStageText(station), action));
+}
+
+void FieldPositionPage::setQrResult(const QString &value) {
+    qrResultLabel_->setText(QStringLiteral("扫码：%1").arg(value));
 }
 
 void FieldPositionPage::setRawPickRouteContinued() {

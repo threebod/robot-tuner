@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
     auto *rawPickStart = page.findChild<QPushButton *>("rawPickStartButton");
     auto *missionStart = page.findChild<QPushButton *>("missionStartButton");
     auto *missionStatus = page.findChild<QLabel *>("missionStatusLabel");
+    auto *qrResult = page.findChild<QLabel *>("qrResultLabel");
     auto *rawPickContinue = page.findChild<QPushButton *>("rawPickContinueButton");
     auto *rawPickStatus = page.findChild<QLabel *>("rawPickStatusLabel");
     if (!require(preset1 && preset2 && apply && simulation && x && y && yaw &&
@@ -124,11 +125,14 @@ int main(int argc, char **argv) {
                      coordinateMove && fullRouteZone && fullRouteRpm &&
                      fullRouteStart && fullRouteStatus && rawPickStart &&
                      rawPickContinue && rawPickStatus && missionStart &&
-                     missionStatus &&
+                     missionStatus && qrResult &&
                      navigationControls->isHidden(),
                  "field position page controls are incomplete")) {
         return 1;
     }
+    page.setQrResult(QStringLiteral("426"));
+    if (!require(qrResult->text() == QStringLiteral("扫码：426"),
+                 "QR result was not shown")) return 1;
 
     preset1->click();
     if (!require(near(x->value(), 2250) && near(y->value(), 2250) &&

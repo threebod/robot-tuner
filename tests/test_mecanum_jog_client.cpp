@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
     QStringList fullRouteStages;
     QStringList rawPickStates;
     QStringList missionPhases;
+    QStringList qrResults;
     int rawPickContinued = 0;
     QList<bool> fullRouteRunning;
     QList<QPointF> fullRoutePositions;
@@ -54,6 +55,8 @@ int main(int argc, char **argv) {
                      [&](QByteArray bytes) { transmitted.push_back(bytes); });
     QObject::connect(&client, &MecanumJogClient::lineReceived,
                      [&](QString line) { lines.push_back(line); });
+    QObject::connect(&client, &MecanumJogClient::qrResultReceived,
+                     [&](QString value) { qrResults.push_back(value); });
     QObject::connect(&client, &MecanumJogClient::commandFailed,
                      [&](QString reason) { failures.push_back(reason); });
     QObject::connect(
@@ -354,10 +357,12 @@ int main(int argc, char **argv) {
     client.ingestBytes(QByteArrayView(
         "ARMED for one enable or motion command\r\n"
         "ROUTE MISSION phase=QR_WAIT station=QR\r\n"
+        "QR RESULT value=426\r\n"
         "ROUTE MISSION phase=TEMP_ALIGN station=TEMP_1\r\n"));
     if (!require(transmitted.back() == QByteArray("route mission 2 40\r\n") &&
                      missionPhases == QStringList({QStringLiteral("QR_WAIT:QR"),
                                                   QStringLiteral("TEMP_ALIGN:TEMP_1")}) &&
+                     qrResults == QStringList({QStringLiteral("426")}) &&
                      client.fullRouteRunning(),
                  "mission command or phase parsing is incorrect")) return 1;
     client.ingestBytes(QByteArrayView("ROUTE INVALID reason=mission_vision\r\n"));

@@ -421,6 +421,11 @@ void MecanumJogClient::handleLine(const QString &line) {
         "right_mm=(-?\\d+(?:\\.\\d+)?) iterations=(\\d+)$"));
 
     emit lineReceived(line);
+    const QString qrPrefix = QStringLiteral("QR RESULT value=");
+    if (line.startsWith(qrPrefix) && line.size() > qrPrefix.size()) {
+        emit qrResultReceived(line.mid(qrPrefix.size()));
+        return;
+    }
     if (missionSetupStage_ != 0) {
         if (line.startsWith(QStringLiteral("STOP")) ||
             line.startsWith(QStringLiteral("EMERGENCY STOP"))) {
