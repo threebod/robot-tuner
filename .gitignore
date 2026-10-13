@@ -1,0 +1,14 @@
+# CMake/Qt build and deployment outputs
+/build/
+/build-*/
+/dist/
+
+# Editor-local state
+/.qtcreator/
+/.vscode/
+*.user
+
+# Runtime and Python cache files
+*.log
+__pycache__/
+*.py[cod]
