@@ -190,10 +190,10 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     auxDistance->setValue(10.0);
     auxDistance->setSuffix(QStringLiteral(" mm"));
     auto *auxDistanceRpm = spin(QStringLiteral("mecanumAuxDistanceRpmSpin"),
-                                10, 2000, 30, auxDistanceRow);
+                                10, 1200, 30, auxDistanceRow);
     auxDistanceRpm->setSuffix(QStringLiteral(" RPM"));
     auto *auxDistanceAccel = spin(
-        QStringLiteral("mecanumAuxDistanceAccelSpin"), 1, 240, 50,
+        QStringLiteral("mecanumAuxDistanceAccelSpin"), 1, 200, 50,
         auxDistanceRow);
     auto *auxDistanceSend = button(
         QStringLiteral("定距移动"),
@@ -360,7 +360,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                             route);
     auto *routeZone = combo(QStringLiteral("mecanumRouteZoneCombo"),
                             {QStringLiteral("1"), QStringLiteral("2")}, route);
-    auto *routeRpm = spin(QStringLiteral("mecanumRouteRpmSpin"), 10, 120, 60,
+    auto *routeRpm = spin(QStringLiteral("mecanumRouteRpmSpin"), 10, 250, 200,
                           route);
     routeRpm->setSingleStep(10);
     routeRpm->setSuffix(QStringLiteral(" RPM"));
@@ -387,11 +387,11 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeLateralScale->setValue(90.0);
     routeLateralScale->setSuffix(QStringLiteral(" %"));
     auto *routeTurnRpm = spin(QStringLiteral("mecanumRouteTurnRpmSpin"),
-                              10, 120, 45, route);
+                              10, 250, 230, route);
     routeTurnRpm->setSingleStep(5);
     routeTurnRpm->setSuffix(QStringLiteral(" RPM"));
     auto *routeLateralRpm = spin(QStringLiteral("mecanumRouteLateralRpmSpin"),
-                                 10, 120, 60, route);
+                                 10, 250, 150, route);
     routeLateralRpm->setSingleStep(10);
     routeLateralRpm->setSuffix(QStringLiteral(" RPM"));
     auto *routeLateralScaleSend = button(

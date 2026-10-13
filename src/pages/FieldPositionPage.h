@@ -6,12 +6,14 @@
 #include <QWidget>
 
 #include "device/TelemetryTypes.h"
+#include "device/AvoidanceTypes.h"
 
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTimer;
@@ -29,6 +31,8 @@ public:
     QPointF targetFieldPosition() const;
     void setPoseSample(PoseSample sample);
     void setTargetPoint(QPointF point, bool visible);
+    void setAvoidanceStatus(int blockedMask);
+    void setAvoidancePath(QVector<QPointF> path);
 
 signals:
     void fieldPointSelected(QPointF fieldPoint);
@@ -43,6 +47,9 @@ private:
     PoseSample pose_;
     QPointF targetPoint_;
     bool targetVisible_{};
+    bool avoidanceVisible_{};
+    int blockedMask_{};
+    QVector<QPointF> avoidancePath_;
 };
 
 class FieldPositionPage : public QWidget {
@@ -71,12 +78,20 @@ public:
                               const QString &state, const QString &stage,
                               qint32 targetX, qint32 targetY);
     void setFullRouteStage(int index, const QString &stage);
+    void setFullRouteDistance(int index, const QString &direction, qint32 distanceMm,
+                              qint32 progressMm, double yawDegrees,
+                              const QString &state, const QString &stage);
+    void setFullRouteDistanceCompleted();
     void setFullRouteCompleted(qint32 xMm, qint32 yMm);
     void setFullRouteError(const QString &message);
     void setRawPickRouteState(const QString &state, int color, int slot);
     void setRawPickRouteContinued();
     void setMissionPhase(const QString &phase, const QString &station);
     void setQrResult(const QString &value);
+    void setAvoidanceStatus(AvoidanceStatus status);
+    void setAvoidancePath(QVector<QPointF> path);
+    void setAvoidanceRunning(bool running);
+    void setAvoidanceError(const QString &reason);
 
 public slots:
     void selectFieldPoint(QPointF fieldPoint);
@@ -87,9 +102,13 @@ signals:
     void navigationInitRequested(int startZone);
     void navigationTargetRequested(qint32 xMm, qint32 yMm, quint16 rpm);
     void fullRouteRequested(int startZone, quint16 rpm);
+    void avoidanceStartRequested(int startZone, quint16 rpm);
+    void avoidanceStopRequested();
+    void avoidanceStatusRequested();
+    void avoidanceClearRequested();
     void rawPickRouteRequested(int startZone, quint16 rpm);
     void rawPickRouteContinueRequested();
-    void missionRouteRequested(int startZone, quint16 rpm);
+    void missionRouteRequested(int startZone, quint16 rpm, QString taskCode, bool waitForButton);
 
 private:
     void applyInputPose();
@@ -131,10 +150,20 @@ private:
     QLabel *fullRouteStatusLabel_{};
     QPushButton *rawPickStartButton_{};
     QPushButton *missionStartButton_{};
+    QPushButton *missionPrepareButton_{};
+    QLineEdit *missionTaskCodeEdit_{};
     QPushButton *rawPickContinueButton_{};
     QLabel *rawPickStatusLabel_{};
     QLabel *missionStatusLabel_{};
     QLabel *qrResultLabel_{};
+    QComboBox *avoidanceZoneCombo_{};
+    QSpinBox *avoidanceRpmSpin_{};
+    QPushButton *avoidanceStartButton_{};
+    QPushButton *avoidanceStopButton_{};
+    QPushButton *avoidanceClearButton_{};
+    QLabel *avoidanceStatusLabel_{};
+    bool avoidanceRunning_{};
+    bool emergencyLocked_{};
     SerialDebugPanel *serialPanel_{};
     QTimer *staleTimer_{};
     QElapsedTimer lastUpdate_;

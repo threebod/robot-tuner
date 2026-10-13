@@ -1,4 +1,5 @@
 #include "pages/FieldPositionPage.h"
+#include "../../../test/mecanum_jog/task_code.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -8,6 +9,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
@@ -23,6 +25,7 @@
 #include <limits>
 
 #include "widgets/SerialDebugPanel.h"
+#include "../../../test/mecanum_jog/avoidance_regions.h"
 
 namespace {
 
@@ -48,6 +51,7 @@ QString routeStageText(const QString &stage) {
         stage == QStringLiteral("TEMP_2_STACK"))
         return QStringLiteral("暂存区（第二轮）");
     if (stage == QStringLiteral("HOME")) return QStringLiteral("返回启停区");
+    if (stage == QStringLiteral("START")) return QStringLiteral("启停区（按键选择）");
     return QStringLiteral("通道行驶");
 }
 
@@ -160,6 +164,22 @@ void FieldMapWidget::paintEvent(QPaintEvent *) {
     drawFieldLabel(&painter, area, {1200, 80}, QStringLiteral("粗加工区"));
     drawFieldLabel(&painter, area, {120, 1200}, QStringLiteral("暂存区"));
     drawFieldLabel(&painter, area, {2280, 1200}, QStringLiteral("二维码区"));
+
+    if (avoidanceVisible_) {
+        for (unsigned i = 0; i < AV_REGION_COUNT; ++i) {
+            const auto &region = avRegions[i];
+            const QRectF box = fieldBox(region.x0, region.y0, region.x1 - region.x0, region.y1 - region.y0);
+            const bool blocked = (blockedMask_ & (1 << i)) != 0;
+            painter.setPen(QPen(blocked ? QColor(185, 28, 28) : QColor(128, 138, 150), 1, Qt::DashLine));
+            painter.setBrush(blocked ? QColor(239, 68, 68, 90) : Qt::transparent);
+            painter.drawRect(box);
+            painter.drawText(box.adjusted(3, 3, -3, -3), Qt::AlignTop | Qt::AlignLeft,
+                             QStringLiteral("R%1%2").arg(i + 1).arg(blocked ? QStringLiteral(" 已堵") : QString()));
+        }
+        painter.setPen(QPen(QColor(0, 125, 190), 3));
+        for (int i = 1; i < avoidancePath_.size(); ++i)
+            painter.drawLine(fieldToScreen(avoidancePath_[i - 1], area), fieldToScreen(avoidancePath_[i], area));
+    }
 
     painter.setPen(QPen(QColor(40, 45, 50), 1));
     painter.drawText(QRectF(area.left(), area.bottom() + 8, area.width(), 24),
@@ -287,9 +307,9 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     navigationStateLabel_->setWordWrap(true);
     navigationRpmSpin_ = new QSpinBox(navigationControlGroup_);
     navigationRpmSpin_->setObjectName(QStringLiteral("navigationRpmSpin"));
-    navigationRpmSpin_->setRange(10, 120);
+    navigationRpmSpin_->setRange(10, 250);
     navigationRpmSpin_->setSingleStep(10);
-    navigationRpmSpin_->setValue(60);
+    navigationRpmSpin_->setValue(200);
     navigationRpmSpin_->setSuffix(QStringLiteral(" RPM"));
     navigationMoveButton_ = new QPushButton(QStringLiteral("移动到目标"),
                                             navigationControlGroup_);
@@ -314,9 +334,9 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     }
     coordinateRpmSpin_ = new QSpinBox(coordinateGroup);
     coordinateRpmSpin_->setObjectName(QStringLiteral("coordinateRpmSpin"));
-    coordinateRpmSpin_->setRange(10, 120);
+    coordinateRpmSpin_->setRange(10, 250);
     coordinateRpmSpin_->setSingleStep(10);
-    coordinateRpmSpin_->setValue(60);
+    coordinateRpmSpin_->setValue(200);
     coordinateRpmSpin_->setSuffix(QStringLiteral(" RPM"));
     coordinateMoveButton_ = new QPushButton(QStringLiteral("移动到指定坐标"),
                                              coordinateGroup);
@@ -336,9 +356,9 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     fullRouteZoneCombo_->addItem(QStringLiteral("启停区 2"), 2);
     fullRouteRpmSpin_ = new QSpinBox(fullRouteGroup);
     fullRouteRpmSpin_->setObjectName(QStringLiteral("fullRouteRpmSpin"));
-    fullRouteRpmSpin_->setRange(10, 120);
+    fullRouteRpmSpin_->setRange(10, 250);
     fullRouteRpmSpin_->setSingleStep(10);
-    fullRouteRpmSpin_->setValue(60);
+    fullRouteRpmSpin_->setValue(200);
     fullRouteRpmSpin_->setSuffix(QStringLiteral(" RPM"));
     fullRouteStartButton_ = new QPushButton(QStringLiteral("开始完整跑图（仅底盘）"),
                                             fullRouteGroup);
@@ -352,6 +372,15 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     missionStartButton_ = new QPushButton(QStringLiteral("开始两轮完整取放"),
                                           fullRouteGroup);
     missionStartButton_->setObjectName(QStringLiteral("missionStartButton"));
+    missionPrepareButton_ = new QPushButton(QStringLiteral("下发并准备任务（PC9启动）"),
+                                            fullRouteGroup);
+    missionPrepareButton_->setObjectName(QStringLiteral("missionPrepareButton"));
+    missionPrepareButton_->setToolTip(QStringLiteral("短按松开PC9启动启停区1，长按满1秒启动启停区2；速度使用上方设置"));
+    missionTaskCodeEdit_ = new QLineEdit(fullRouteGroup);
+    missionTaskCodeEdit_->setObjectName(QStringLiteral("missionTaskCodeEdit"));
+    missionTaskCodeEdit_->setPlaceholderText(QStringLiteral("例如 156+123+516+231"));
+    missionTaskCodeEdit_->setToolTip(QStringLiteral(
+        "颜色：红1、黄2、蓝3、绿4、黑5、浅蓝6。第一/三组为取料顺序，第二组为第一批粗加工和暂存位置，第四组仅为第二批粗加工位置；第二批暂存按第一层同色码垛。"));
     rawPickContinueButton_ = new QPushButton(QStringLiteral("确认并继续路线"),
                                              fullRouteGroup);
     rawPickContinueButton_->setObjectName(QStringLiteral("rawPickContinueButton"));
@@ -369,6 +398,8 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     fullRouteLayout->addRow(QStringLiteral("速度"), fullRouteRpmSpin_);
     fullRouteLayout->addRow(fullRouteStartButton_);
     fullRouteLayout->addRow(rawPickStartButton_);
+    fullRouteLayout->addRow(QStringLiteral("任务码"), missionTaskCodeEdit_);
+    fullRouteLayout->addRow(missionPrepareButton_);
     fullRouteLayout->addRow(missionStartButton_);
     fullRouteLayout->addRow(rawPickContinueButton_);
     fullRouteLayout->addRow(fullRouteStatusLabel_);
@@ -376,6 +407,46 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
     fullRouteLayout->addRow(missionStatusLabel_);
     fullRouteLayout->addRow(qrResultLabel_);
     navigationLayout->addWidget(fullRouteGroup);
+    auto *avoidanceGroup = new QGroupBox(QStringLiteral("避障跑图（两轮，仅底盘）"), navigationControlGroup_);
+    avoidanceGroup->setObjectName(QStringLiteral("avoidanceGroup"));
+    auto *avoidanceLayout = new QFormLayout(avoidanceGroup);
+    avoidanceZoneCombo_ = new QComboBox(avoidanceGroup);
+    avoidanceZoneCombo_->setObjectName(QStringLiteral("avoidanceZoneCombo"));
+    avoidanceZoneCombo_->addItem(QStringLiteral("启停区 1"), 1);
+    avoidanceZoneCombo_->addItem(QStringLiteral("启停区 2"), 2);
+    avoidanceRpmSpin_ = new QSpinBox(avoidanceGroup);
+    avoidanceRpmSpin_->setObjectName(QStringLiteral("avoidanceRpmSpin"));
+    avoidanceRpmSpin_->setRange(10, 250);
+    avoidanceRpmSpin_->setValue(30);
+    avoidanceRpmSpin_->setSuffix(QStringLiteral(" RPM"));
+    avoidanceStartButton_ = new QPushButton(QStringLiteral("开始两轮避障跑图"), avoidanceGroup);
+    avoidanceStartButton_->setObjectName(QStringLiteral("avoidanceStartButton"));
+    avoidanceStopButton_ = new QPushButton(QStringLiteral("停止避障跑图"), avoidanceGroup);
+    avoidanceStopButton_->setObjectName(QStringLiteral("avoidanceStopButton"));
+    avoidanceClearButton_ = new QPushButton(QStringLiteral("清空障碍记忆"), avoidanceGroup);
+    avoidanceClearButton_->setObjectName(QStringLiteral("avoidanceClearButton"));
+    auto *avoidanceQuery = new QPushButton(QStringLiteral("查询避障状态"), avoidanceGroup);
+    avoidanceQuery->setObjectName(QStringLiteral("avoidanceQueryButton"));
+    avoidanceStatusLabel_ = new QLabel(QStringLiteral("待命：障碍记录以主控为准，位置为指令积分估计。"), avoidanceGroup);
+    avoidanceStatusLabel_->setObjectName(QStringLiteral("avoidanceStatusLabel"));
+    avoidanceStatusLabel_->setWordWrap(true);
+    avoidanceLayout->addRow(QStringLiteral("起点"), avoidanceZoneCombo_);
+    avoidanceLayout->addRow(QStringLiteral("速度"), avoidanceRpmSpin_);
+    avoidanceLayout->addRow(avoidanceStartButton_);
+    avoidanceLayout->addRow(avoidanceStopButton_);
+    avoidanceLayout->addRow(avoidanceQuery);
+    avoidanceLayout->addRow(avoidanceClearButton_);
+    avoidanceLayout->addRow(avoidanceStatusLabel_);
+    navigationLayout->addWidget(avoidanceGroup);
+    connect(avoidanceStartButton_, &QPushButton::clicked, this, [this] {
+        setAvoidanceRunning(true);
+        avoidanceStatusLabel_->setText(QStringLiteral("等待主控启动确认"));
+        emit avoidanceStartRequested(avoidanceZoneCombo_->currentData().toInt(),
+                                    static_cast<quint16>(avoidanceRpmSpin_->value()));
+    });
+    connect(avoidanceStopButton_, &QPushButton::clicked, this, &FieldPositionPage::avoidanceStopRequested);
+    connect(avoidanceQuery, &QPushButton::clicked, this, &FieldPositionPage::avoidanceStatusRequested);
+    connect(avoidanceClearButton_, &QPushButton::clicked, this, &FieldPositionPage::avoidanceClearRequested);
     navigationControlGroup_->hide();
     panel->addWidget(navigationControlGroup_);
 
@@ -517,12 +588,25 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
         emit rawPickRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
                                    static_cast<quint16>(fullRouteRpmSpin_->value()));
     });
-    connect(missionStartButton_, &QPushButton::clicked, this, [this] {
+    const auto requestMission = [this](bool waitForButton) {
+        const QString taskCode = missionTaskCodeEdit_->text().trimmed();
+        const QByteArray encodedTask = taskCode.toUtf8();
+        MissionTask task;
+        if (encodedTask.size() != 15 || !missionTaskParse(encodedTask.constData(), &task)) {
+            missionStatusLabel_->setText(QStringLiteral(
+                "任务码无效：请输入CCC+PPP+CCC+PPP，颜色1～6，位置每组为1、2、3的排列"));
+            return;
+        }
         if (QMessageBox::warning(
                 this, QStringLiteral("确认两轮取放"),
-                QStringLiteral("确认机构初始姿态，电机方向、限位、急停及各工位动作已分段实测。\n"
-                               "启动时将自动指令夹爪70°、平台26°，并应用视觉页圆环2比例到物料和圆环2。\n"
-                               "启动后二维码点停留1秒，扫码结果仅显示，并自动执行两轮取放。"),
+                QStringLiteral("上电时水平轴、升降轴已在零位，机构零位将自动初始化。\n"
+                               "电机方向、限位、急停及各工位动作已分段实测。\n"
+                               "准备时将自动指令夹爪90°（270°/s）、平台26°，并应用视觉页圆环2比例到物料和圆环2。\n"
+                               "%1\n"
+                               "启动后二维码点至少停留1秒，等待合法四组扫码任务码后执行两轮取放；第二批暂存放第二层。")
+                    .arg(waitForButton ?
+                        QStringLiteral("准备完成后等待PC9：短按松开从启停区1出发，长按满1秒从启停区2出发。") :
+                        QStringLiteral("准备完成后立即从所选启停区出发。")),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
             QMessageBox::Yes) return;
         fullRouteRunning_ = missionRunning_ = true;
@@ -532,8 +616,13 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
         qrResultLabel_->setText(QStringLiteral("扫码：等待结果"));
         refreshNavigationControls();
         emit missionRouteRequested(fullRouteZoneCombo_->currentData().toInt(),
-                                   static_cast<quint16>(fullRouteRpmSpin_->value()));
-    });
+                                   static_cast<quint16>(fullRouteRpmSpin_->value()), taskCode,
+                                   waitForButton);
+    };
+    connect(missionStartButton_, &QPushButton::clicked, this,
+            [requestMission] { requestMission(false); });
+    connect(missionPrepareButton_, &QPushButton::clicked, this,
+            [requestMission] { requestMission(true); });
     connect(rawPickContinueButton_, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(
                 this, QStringLiteral("确认继续路线"),
@@ -613,6 +702,8 @@ void FieldPositionPage::setDeviceError(const QString &message) {
 }
 
 void FieldPositionPage::setEmergencyLocked(bool locked) {
+    emergencyLocked_ = locked;
+    refreshNavigationControls();
     emergencyStateLabel_->setText(locked ? QStringLiteral("急停锁定")
                                          : QStringLiteral("正常"));
     emergencyStateLabel_->setStyleSheet(
@@ -650,6 +741,8 @@ void FieldPositionPage::setNavigationMode(bool enabled) {
 void FieldPositionPage::setNavigationConnected(bool connected) {
     navigationConnected_ = connected;
     if (!connected) {
+        avoidanceRunning_ = false;
+        avoidanceStatusLabel_->setText(QStringLiteral("未连接：地图记录可能已过期，重连后查询主控状态。"));
         fullRouteRunning_ = false;
         rawPickReady_ = false;
         setNavigationInitialized(false);
@@ -755,6 +848,41 @@ void FieldPositionPage::setFullRouteEstimate(qint32 xMm, qint32 yMm,
     refreshNavigationControls();
 }
 
+void FieldPositionPage::setFullRouteDistance(int index, const QString &direction,
+                                              qint32 distanceMm, qint32 progressMm,
+                                              double yawDegrees, const QString &state,
+                                              const QString &stage) {
+    const QString directionText = direction == QStringLiteral("UP") ? QStringLiteral("向上") :
+                                  direction == QStringLiteral("DOWN") ? QStringLiteral("向下") :
+                                  direction == QStringLiteral("LEFT") ? QStringLiteral("向左") :
+                                                                       QStringLiteral("向右");
+    map_->setTargetPoint(QPointF(), false);
+    sourceLabel_->setText(QStringLiteral("数据来源：按段移动距离估计"));
+    steeringAngleLabel_->setText(QStringLiteral("%1°").arg(yawDegrees, 0, 'f', 2));
+    lastImuUpdate_.restart();
+    fullRouteStatusLabel_->setText(
+        QStringLiteral("状态：第 %1 段，%2，%3 %4 / %5 mm，%6")
+            .arg(index).arg(routeStageText(stage)).arg(directionText)
+            .arg(progressMm).arg(distanceMm)
+            .arg(state == QStringLiteral("TURN") ? QStringLiteral("转向中") :
+                 state == QStringLiteral("WAIT") ? QStringLiteral("停车等待") :
+                                                    QStringLiteral("移动中")));
+    fullRouteRunning_ = true;
+    refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setFullRouteDistanceCompleted() {
+    fullRouteRunning_ = false;
+    if (missionRunning_) missionStatusLabel_->setText(QStringLiteral("任务：距离路线已执行完成"));
+    missionRunning_ = false;
+    rawPickReady_ = false;
+    map_->setTargetPoint(QPointF(), false);
+    fullRouteStatusLabel_->setText(QStringLiteral("状态：按段距离路线完成，请核实实际停车位置"));
+    refreshStatus();
+    refreshNavigationControls();
+}
+
 void FieldPositionPage::setFullRouteStage(int index, const QString &stage) {
     fullRouteStatusLabel_->setText(
         QStringLiteral("状态：第 %1 阶段，%2").arg(index).arg(routeStageText(stage)));
@@ -788,6 +916,9 @@ void FieldPositionPage::setRawPickRouteState(const QString &state, int color,
     const QString colorName = color == 4 ? QStringLiteral("绿") :
                               color == 2 ? QStringLiteral("黄") :
                               color == 6 ? QStringLiteral("浅蓝") :
+                              color == 5 ? QStringLiteral("黑") :
+                              color == 1 ? QStringLiteral("红") :
+                              color == 3 ? QStringLiteral("蓝") :
                                            QString::number(color);
     if (state == QStringLiteral("DONE")) {
         rawPickReady_ = !missionRunning_;
@@ -806,9 +937,9 @@ void FieldPositionPage::setRawPickRouteState(const QString &state, int color,
                                state == QStringLiteral("ITEM_DONE") ?
                                    QStringLiteral("本件动作完成") :
                                    QStringLiteral("错误");
-        rawPickStatusLabel_->setText(
-            QStringLiteral("取料：%1，%2，平台第 %3 槽")
-                .arg(action, colorName).arg(slot));
+        rawPickStatusLabel_->setText(color == 0 || slot == 0 ?
+            QStringLiteral("取料：%1，等待任意颜色物料，用于中心对准").arg(action) :
+            QStringLiteral("取料：%1，%2，平台第 %3 槽").arg(action, colorName).arg(slot));
         if (state == QStringLiteral("ERROR")) rawPickReady_ = false;
     }
     refreshNavigationControls();
@@ -817,11 +948,13 @@ void FieldPositionPage::setRawPickRouteState(const QString &state, int color,
 void FieldPositionPage::setMissionPhase(const QString &phase,
                                         const QString &station) {
     const QString action = phase == QStringLiteral("QR_WAIT") ?
-                               QStringLiteral("停车等待1秒") :
+                               QStringLiteral("停车至少1秒，等待四组扫码任务码") :
+                           phase == QStringLiteral("WAIT_BUTTON") ?
+                               QStringLiteral("等待PC9：短按松开启动区1，长按满1秒启动区2") :
                            phase == QStringLiteral("RAW_PICK") ?
                                QStringLiteral("按颜色取料") :
                            phase == QStringLiteral("RING_PREP") ?
-                               QStringLiteral("水平轴收至-500") :
+                               QStringLiteral("水平轴收至-770") :
                            phase == QStringLiteral("RING_ALIGN") ?
                                QStringLiteral("对齐圆环2") :
                            phase == QStringLiteral("TEMP_ALIGN") ?
@@ -834,6 +967,10 @@ void FieldPositionPage::setMissionPhase(const QString &phase,
                                QStringLiteral("暂存区放置") :
                            phase == QStringLiteral("RECENTER") ?
                                QStringLiteral("返回工位停车点") :
+                           phase == QStringLiteral("RAW_EXIT_VERTICAL") ?
+                               QStringLiteral("取料后仅沿地图上下归位") :
+                           phase == QStringLiteral("RAW_EXIT_RIGHT_50") ?
+                               QStringLiteral("合并取料补偿与右移50 mm") :
                            phase == QStringLiteral("CONTINUE") ?
                                QStringLiteral("继续行驶") : phase;
     missionStatusLabel_->setText(
@@ -855,22 +992,75 @@ void FieldPositionPage::refreshNavigationControls() {
     navigationControlGroup_->setEnabled(navigationConnected_);
     navigationMoveButton_->setEnabled(
         navigationMode_ && navigationConnected_ && navigationInitialized_ &&
-        navigationTargetValid_ && !navigationRunning_ && !fullRouteRunning_);
+        navigationTargetValid_ && !navigationRunning_ && !fullRouteRunning_ && !avoidanceRunning_);
     coordinateMoveButton_->setEnabled(
         navigationMode_ && navigationConnected_ && navigationInitialized_ &&
-        !navigationRunning_ && !fullRouteRunning_);
+        !navigationRunning_ && !fullRouteRunning_ && !avoidanceRunning_);
     fullRouteStartButton_->setEnabled(
         navigationMode_ && navigationConnected_ && !navigationRunning_ &&
-        !fullRouteRunning_);
+        !fullRouteRunning_ && !avoidanceRunning_);
     rawPickStartButton_->setEnabled(
         navigationMode_ && navigationConnected_ && !navigationRunning_ &&
-        !fullRouteRunning_);
+        !fullRouteRunning_ && !avoidanceRunning_);
     missionStartButton_->setEnabled(
         navigationMode_ && navigationConnected_ && !navigationRunning_ &&
-        !fullRouteRunning_);
+        !fullRouteRunning_ && !avoidanceRunning_);
+    missionPrepareButton_->setEnabled(missionStartButton_->isEnabled());
+    missionTaskCodeEdit_->setEnabled(!fullRouteRunning_);
     rawPickContinueButton_->setEnabled(
         navigationMode_ && navigationConnected_ && fullRouteRunning_ &&
         rawPickReady_);
+    const bool idle = !navigationRunning_ && !fullRouteRunning_ && !avoidanceRunning_;
+    avoidanceStartButton_->setEnabled(navigationMode_ && navigationConnected_ && idle && !emergencyLocked_);
+    avoidanceClearButton_->setEnabled(navigationConnected_ && idle);
+    avoidanceStopButton_->setEnabled(navigationConnected_ && avoidanceRunning_);
+    avoidanceZoneCombo_->setEnabled(idle);
+    avoidanceRpmSpin_->setEnabled(idle);
+}
+
+void FieldMapWidget::setAvoidanceStatus(int blockedMask) {
+    avoidanceVisible_ = true;
+    blockedMask_ = blockedMask;
+    update();
+}
+
+void FieldMapWidget::setAvoidancePath(QVector<QPointF> path) {
+    avoidancePath_ = std::move(path);
+    update();
+}
+
+void FieldPositionPage::setAvoidanceRunning(bool running) {
+    avoidanceRunning_ = running;
+    refreshStatus();
+    refreshNavigationControls();
+}
+
+void FieldPositionPage::setAvoidanceStatus(AvoidanceStatus status) {
+    setAvoidanceRunning(status.active);
+    map_->setAvoidanceStatus(status.blockedMask);
+    if (status.active || status.state == QStringLiteral("DONE")) {
+        PoseSample sample;
+        sample.xMm = status.xMm; sample.yMm = status.yMm;
+        sample.yawDegrees = status.yawDegrees;
+        setPoseSample(sample, QStringLiteral("避障跑图估计（非真实定位）"));
+        lastImuUpdate_.restart();
+        refreshStatus();
+    }
+    avoidanceStatusLabel_->setText(QStringLiteral(
+        "第%1轮 · %2 · %3\n观察区域：%4；已堵掩码：%5；重规划：%6次\n相机：%7；原因：%8")
+        .arg(status.round).arg(routeStageText(status.target)).arg(status.state)
+        .arg(status.region ? QStringLiteral("R%1").arg(status.region) : QStringLiteral("作业区/待观察"))
+        .arg(status.blockedMask).arg(status.replans)
+        .arg(status.cameraOnline ? QStringLiteral("在线") : QStringLiteral("未连接/失联"))
+        .arg(status.reason));
+}
+
+void FieldPositionPage::setAvoidancePath(QVector<QPointF> path) {
+    map_->setAvoidancePath(std::move(path));
+}
+
+void FieldPositionPage::setAvoidanceError(const QString &reason) {
+    avoidanceStatusLabel_->setText(QStringLiteral("避障跑图：%1").arg(reason));
 }
 
 QPointF FieldPositionPage::nearestNavigationPoint(QPointF fieldPoint) const {
@@ -930,7 +1120,7 @@ void FieldPositionPage::applyPreset(qint32 xMm, qint32 yMm) {
 
 void FieldPositionPage::refreshStatus() {
     if (navigationMode_) {
-        const bool moving = navigationRunning_ || fullRouteRunning_;
+        const bool moving = navigationRunning_ || fullRouteRunning_ || avoidanceRunning_;
         const bool stale = moving &&
                            (!lastUpdate_.isValid() || lastUpdate_.elapsed() > 1000);
         const bool imuStale = moving &&
@@ -938,7 +1128,7 @@ void FieldPositionPage::refreshStatus() {
                                lastImuUpdate_.elapsed() > 1000);
         steeringStatusLabel_->setText(
             imuStale ? QStringLiteral("导航航向超时")
-                     : !navigationInitialized_ && !fullRouteRunning_
+                     : !navigationInitialized_ && !fullRouteRunning_ && !avoidanceRunning_
                            ? QStringLiteral("等待导航初始化")
                            : moving
                                  ? QStringLiteral("正常")
@@ -946,7 +1136,7 @@ void FieldPositionPage::refreshStatus() {
         steeringStatusLabel_->setStyleSheet(
             imuStale ? QStringLiteral("color: #b91c1c; font-weight: bold;")
                      : QString());
-        if (!navigationInitialized_ && !fullRouteRunning_) {
+        if (!navigationInitialized_ && !fullRouteRunning_ && !avoidanceRunning_) {
             statusLabel_->setText(QStringLiteral("状态：位置无效，请先初始化"));
             statusLabel_->setStyleSheet(
                 QStringLiteral("color: #b91c1c; font-weight: bold;"));

@@ -20,6 +20,9 @@ class MechanismActionPage : public QWidget {
 public:
     explicit MechanismActionPage(QWidget *parent = nullptr);
     bool initialServoSetupRunning() const { return initialServoStage_ != 0; }
+    bool executionBusy() const {
+        return replaying_ || manualAdjustmentPending_ || awaitingInitialConfirmation_ || initialServoStage_ != 0;
+    }
 
 public slots:
     void setConnected(bool connected);

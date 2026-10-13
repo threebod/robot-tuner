@@ -1,7 +1,9 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFontDatabase>
 #include <QPushButton>
+#include <QPixmap>
 #include <QSpinBox>
 
 #include <iostream>
@@ -17,6 +19,12 @@ bool require(bool condition, const char *message) {
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--screenshot") {
+        const int fontId = QFontDatabase::addApplicationFont(
+            qEnvironmentVariable("WINDIR") + "/Fonts/msyh.ttc");
+        if (!require(fontId >= 0, "Chinese preview font was not available")) return 1;
+        app.setFont(QFont(QFontDatabase::applicationFontFamilies(fontId).first(), 10));
+    }
     VisionPage page;
     auto *mode = page.findChild<QComboBox *>("visionModeCombo");
     auto *target = page.findChild<QComboBox *>("visionTargetCombo");
@@ -28,9 +36,10 @@ int main(int argc, char **argv) {
     auto *forwardScale = page.findChild<QDoubleSpinBox *>("visionForwardScaleSpinBox");
     auto *rightScale = page.findChild<QDoubleSpinBox *>("visionRightScaleSpinBox");
     auto *applyScale = page.findChild<QPushButton *>("visionApplyScaleButton");
+    auto *calibrate = page.findChild<QPushButton *>("visionCalibrateButton");
     if (!require(mode && target && start && pause && forward && step && rpm,
                  "vision controls are missing")) return 1;
-    if (!require(forwardScale && rightScale && applyScale,
+    if (!require(forwardScale && rightScale && applyScale && calibrate,
                  "ring scale controls are missing")) return 1;
     page.setConnected(true);
     int material = 0;
@@ -78,6 +87,27 @@ int main(int argc, char **argv) {
     target->setCurrentIndex(1);
     if (!require(!start->isEnabled(),
                  "another ring inherited scale confirmation")) return 1;
+    int calibrationRequests = 0;
+    QObject::connect(&page, &VisionPage::ringCalibrationRequested, [&] { ++calibrationRequests; });
+    if (!require(calibrate->isEnabled(), "ring 2 calibration required a previous scale")) return 1;
+    calibrate->click();
+    page.setCalibrationRunning(true);
+    page.setVisionState("IDLE");
+    if (!require(calibrationRequests == 1 && !start->isEnabled() && !applyScale->isEnabled() &&
+                 !calibrate->isEnabled() && !mode->isEnabled() && !target->isEnabled() && pause->isEnabled(),
+                 "calibration did not lock competing controls between samples")) return 1;
+    page.setCalibrationScales(500, 1000);
+    page.setCalibrationRunning(false);
+    if (!require(page.ring2ForwardMilli() == 500 && page.ring2RightMilli() == 1000 && !start->isEnabled(),
+                 "calculated scales were used before firmware acknowledgement")) return 1;
+    page.setRingScaleApplied(2, 500, 1000);
+    if (!require(start->isEnabled(), "automatic scales did not enable alignment after confirmation")) return 1;
+    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--screenshot") {
+        page.resize(760, 680);
+        page.show();
+        app.processEvents();
+        if (!require(page.grab().save(QString::fromLocal8Bit(argv[2])), "vision preview was not saved")) return 1;
+    }
     forwardScale->setValue(0.720);
     rightScale->setValue(0.810);
     if (!require(page.ring2ForwardMilli() == 720 && page.ring2RightMilli() == 810,

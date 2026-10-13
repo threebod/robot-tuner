@@ -207,7 +207,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     transmitted.clear();
-    if (!require(client.navigateTo(400, 1200, 120) &&
+    if (!require(!client.navigateTo(400, 1200, 251) &&
+                     !client.startFullRoute(1, 251) &&
+                     !client.startRawPickRoute(1, 251) &&
+                     !client.startMissionRoute(1, QStringLiteral("156+123+516+231"), 251) && transmitted.isEmpty(),
+                 "route speeds above 250 RPM were accepted")) return 1;
+    if (!require(client.navigateTo(400, 1200, 250) &&
                      transmitted == QList<QByteArray>({QByteArray("arm\r\n")}),
                  "navigation target did not start the arm handshake")) {
         return 1;
@@ -215,7 +220,7 @@ int main(int argc, char **argv) {
     client.ingestBytes(QByteArrayView(
         "ARMED for one enable or motion command\r\n"));
     if (!require(transmitted == QList<QByteArray>({QByteArray("arm\r\n"),
-                                                   QByteArray("nav goto 400 1200 120\r\n")}),
+                                                   QByteArray("nav goto 400 1200 250\r\n")}),
                  "navigation target command is incorrect")) {
         return 1;
     }
@@ -238,14 +243,16 @@ int main(int argc, char **argv) {
     }
     client.ingestBytes(QByteArrayView(
         "MECH INIT h=-10 l=20 t=684\r\n"
+        "MECH RUN h=0 l=100 t=900\r\n"
         "MECH POS h=0 l=100 t=900\r\n"
         "MECH DONE h=100 l=200 t=1200\r\n"));
     if (!require(mechanismValidity == QList<bool>({true}) &&
-                     mechanismPositions.size() == 3 &&
+                     mechanismPositions.size() == 4 &&
                      mechanismPositions.at(1).liftDmm == 100 &&
                      mechanismStates ==
                          QStringList({QStringLiteral("IDLE"),
                                       QStringLiteral("RUN"),
+                                      QStringLiteral("IDLE"),
                                       QStringLiteral("IDLE")}) &&
                      mechanismCompletions.size() == 1 &&
                      mechanismCompletions.front().turretDdeg == 1200,
@@ -309,16 +316,16 @@ int main(int argc, char **argv) {
     client.ingestBytes(QByteArrayView(
         "ARMED for one enable or motion command\r\n"
         "ROUTE STAGE index=4 name=RAW_1\r\n"
-        "ROUTE RAWPICK state=WAIT_MATERIAL color=4 slot=1\r\n"
+        "ROUTE RAWPICK state=WAIT_MATERIAL color=0 slot=0\r\n"
         "ROUTE RAWPICK state=ITEM_DONE color=4 slot=1\r\n"
-        "ROUTE RAWPICK state=DONE color=6 slot=3\r\n"));
+        "ROUTE RAWPICK state=DONE color=0 slot=0\r\n"));
     if (!require(transmitted ==
                      QList<QByteArray>({QByteArray("arm\r\n"),
                                         QByteArray("route rawpick 1 40\r\n")}) &&
                      rawPickStates ==
-                         QStringList({QStringLiteral("WAIT_MATERIAL:4:1"),
+                         QStringList({QStringLiteral("WAIT_MATERIAL:0:0"),
                                       QStringLiteral("ITEM_DONE:4:1"),
-                                      QStringLiteral("DONE:6:3")}) &&
+                                      QStringLiteral("DONE:0:0")}) &&
                      client.fullRouteRunning() &&
                      client.continueRawPickRoute() &&
                      transmitted.back() == QByteArray("route next\r\n"),
@@ -330,13 +337,42 @@ int main(int argc, char **argv) {
                  "raw-pick route continuation was not acknowledged")) return 1;
     client.ingestBytes(QByteArrayView("ROUTE DONE x=2250 y=2250 yaw_cdeg=0\r\n"));
     transmitted.clear();
-    if (!require(!client.startMissionRoute(2, 40, 720, 810) && transmitted.isEmpty(),
-                 "mission accepted an uninitialized mechanism")) return 1;
+    if (!require(!client.startMissionRoute(2, QStringLiteral("156+113+516+231"), 40) &&
+                     !client.startMissionRoute(2, QStringLiteral("157+123+516+231"), 40) &&
+                     !client.startMissionRoute(2, QStringLiteral("156+123+516+231\nstop"), 40) &&
+                     transmitted.isEmpty(),
+                 "invalid task sent setup or motion commands")) return 1;
+    if (!require(client.startMissionRoute(2, QStringLiteral("156+123+516+231"), 40, 720, 810) &&
+                     transmitted == QList<QByteArray>({QByteArray("mech init 0 0 650\r\n")}),
+                 "mission did not initialize the power-on zero pose automatically")) return 1;
+    client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=2720\r\n"));
+    if (!require(transmitted.size() == 1,
+                 "mission continued without the exact zero pose acknowledgement")) return 1;
+    client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=650\r\n"));
+    if (!require(transmitted.back() == QByteArray("task 156+123+516+231\r\n"),
+                 "mission did not send its task after zero initialization")) return 1;
+    client.emergencyStop();
+    transmitted.clear();
+    if (!require(client.startMissionRoute(2, QStringLiteral("156+123+516+231"), 40, 720, 810),
+                 "automatic initialization restart was rejected")) return 1;
+    client.ingestBytes(QByteArrayView("ERR MECH: busy; stop first\r\n"));
+    if (!require(!client.fullRouteRunning() &&
+                     transmitted == QList<QByteArray>({QByteArray("mech init 0 0 650\r\n"),
+                                                       QByteArray("stop\r\n")}),
+                 "failed automatic initialization continued mission preparation")) return 1;
+    transmitted.clear();
     client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=2700\r\n"));
-    if (!require(client.startMissionRoute(2, 40, 720, 810) &&
-                     transmitted == QList<QByteArray>({QByteArray("servo 2 70 1200\r\n")}),
-                 "mission did not initialize the gripper")) return 1;
-    client.ingestBytes(QByteArrayView("DONE servo=2 angle=70\r\n"));
+    if (!require(client.startMissionRoute(2, QStringLiteral("156+123+516+231"), 40, 720, 810) &&
+                     transmitted == QList<QByteArray>({QByteArray("task 156+123+516+231\r\n")}),
+                 "mission did not send the task before setup")) return 1;
+    client.ingestBytes(QByteArrayView("TASK SET code=156+231+516+123\r\n"));
+    client.ingestBytes(QByteArrayView("DONE servo=2 angle=90\r\n"));
+    if (!require(transmitted.size() == 1,
+                 "mission continued without acknowledgement of the exact task")) return 1;
+    client.ingestBytes(QByteArrayView("TASK SET code=156+123+516+231\r\n"));
+    if (!require(transmitted.back() == QByteArray("servo 2 90 2700\r\n"),
+                 "mission did not initialize the gripper after task confirmation")) return 1;
+    client.ingestBytes(QByteArrayView("DONE servo=2 angle=90\r\n"));
     if (!require(transmitted.back() == QByteArray("servo 3 26 1200\r\n"),
                  "mission did not initialize the platform")) return 1;
     client.ingestBytes(QByteArrayView("DONE servo=3 angle=26\r\n"));
@@ -369,13 +405,43 @@ int main(int argc, char **argv) {
     if (!require(!client.fullRouteRunning(),
                  "mission failure did not clear running state")) return 1;
     transmitted.clear();
-    if (!require(client.startMissionRoute(1, 40),
+    client.setConnected(false);
+    client.setConnected(true);
+    if (!require(client.startMissionRoute(2, QStringLiteral("156+123+516+231"),
+                                          90, 640, 673, true),
+                 "PC9 mission preparation was rejected")) return 1;
+    if (!require(transmitted == QList<QByteArray>({QByteArray("mech init 0 0 650\r\n")}),
+                 "PC9 preparation did not initialize the power-on zero pose")) return 1;
+    client.ingestBytes(QByteArrayView(
+        "MECH INIT h=0 l=0 t=650\r\n"
+        "TASK SET code=156+123+516+231\r\n"
+        "DONE servo=2 angle=90\r\n"
+        "DONE servo=3 angle=26\r\n"
+        "ARMED for one enable or motion command\r\n"
+        "VISION SCALE material forward_milli=640 right_milli=673\r\n"
+        "ARMED for one enable or motion command\r\n"
+        "VISION SCALE ring=2 forward_milli=640 right_milli=673\r\n"
+        "ARMED for one enable or motion command\r\n"));
+    if (!require(transmitted.back() == QByteArray("route button 90\r\n") &&
+                     !transmitted.contains(QByteArray("route mission 2 90\r\n")),
+                 "PC9 preparation started the route before a physical press")) return 1;
+    client.ingestBytes(QByteArrayView(
+        "BUTTON READY rpm=90\r\n"
+        "ROUTE MISSION phase=WAIT_BUTTON station=START\r\n"));
+    if (!require(client.fullRouteRunning() &&
+                     missionPhases.back() == QStringLiteral("WAIT_BUTTON:START"),
+                 "PC9 waiting status was not acknowledged")) return 1;
+    client.ingestBytes(QByteArrayView("ROUTE INVALID reason=heartbeat_timeout\r\n"));
+    if (!require(!client.fullRouteRunning(),
+                 "PC9 waiting state survived a heartbeat fault")) return 1;
+    transmitted.clear();
+    if (!require(client.startMissionRoute(1, QStringLiteral("156+123+516+231"), 40),
                  "mission restart handshake was rejected")) return 1;
     client.ingestBytes(QByteArrayView("ERR servo: 2..4\r\n"));
     if (!require(!client.fullRouteRunning(),
                  "mission start rejection did not restore idle state")) return 1;
     client.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=2700\r\n"));
-    if (!require(client.startMissionRoute(1, 40),
+    if (!require(client.startMissionRoute(1, QStringLiteral("156+123+516+231"), 40),
                  "mission setup for stop test was rejected")) return 1;
     lines.clear();
     transmitted.clear();
@@ -384,7 +450,7 @@ int main(int argc, char **argv) {
                  "emergency stop was not emitted as one raw byte")) {
         return 1;
     }
-    client.ingestBytes(QByteArrayView("DONE servo=2 angle=70\r\n"));
+    client.ingestBytes(QByteArrayView("DONE servo=2 angle=90\r\n"));
     if (!require(transmitted == QList<QByteArray>({QByteArray("!")}),
                  "mission setup continued after emergency stop")) return 1;
     lines.clear();
@@ -522,6 +588,28 @@ int main(int argc, char **argv) {
     }
 
     client.setConnected(true);
+    int distanceReplies = 0;
+    int distanceCompletions = 0;
+    QObject::connect(&client, &MecanumJogClient::fullRouteDistanceReceived,
+                     [&](int index, QString direction, qint32 distance, qint32 progress,
+                         double yaw, QString state, QString stage) {
+                         if (index == 5 && direction == QStringLiteral("DOWN") &&
+                             distance == 1730 && progress == 400 && yaw == -90.5 &&
+                             state == QStringLiteral("RUN") &&
+                             stage == QStringLiteral("COARSE_1_DROP_PICK")) ++distanceReplies;
+                     });
+    QObject::connect(&client, &MecanumJogClient::fullRouteDistanceCompleted,
+                     [&] { ++distanceCompletions; });
+    const int coordinateReplies = fullRoutePositions.size();
+    client.ingestBytes(QByteArrayView(
+        "ROUTE DIST index=5 direction=DOWN distance_mm=1730 progress_mm=400 yaw_cdeg=-9050 state=RUN stage=COARSE_1_DROP_PICK\r\n"));
+    if (!require(distanceReplies == 1 && client.fullRouteRunning() &&
+                     fullRoutePositions.size() == coordinateReplies,
+                 "distance route feedback was not decoded independently of coordinates")) return 1;
+    client.ingestBytes(QByteArrayView("ROUTE DONE mode=DISTANCE\r\n"));
+    if (!require(distanceCompletions == 1 && !client.fullRouteRunning(),
+                 "distance route completion did not clear running state")) return 1;
+
     transmitted.clear();
     failures.clear();
     client.sendArmedCommand(QStringLiteral("A"));

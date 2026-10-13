@@ -5,6 +5,7 @@
 #include <QEventLoop>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -249,8 +250,12 @@ int main(int argc, char **argv) {
                      });
     QObject::connect(&page, &FieldPositionPage::rawPickRouteContinueRequested,
                      [&] { ++rawPickContinueRequested; });
+    QString missionTaskRequested;
+    bool missionWaitForButtonRequested = false;
     QObject::connect(&page, &FieldPositionPage::missionRouteRequested,
-                     [&](int zone, quint16 rpm) {
+                     [&](int zone, quint16 rpm, const QString &taskCode, bool waitForButton) {
+                         missionWaitForButtonRequested = waitForButton;
+                         missionTaskRequested = taskCode;
                          missionZoneRequested = zone;
                          missionRpmRequested = rpm;
                      });
@@ -324,6 +329,20 @@ int main(int argc, char **argv) {
                  "full route completion did not restore controls")) {
         return 1;
     }
+    const QPointF previousMapPosition = map->displayedFieldPosition();
+    page.setFullRouteDistance(5, QStringLiteral("DOWN"), 1730, 400, -90.5,
+                             QStringLiteral("RUN"), QStringLiteral("COARSE_1_DROP_PICK"));
+    if (!require(map->displayedFieldPosition() == previousMapPosition &&
+                     fullRouteStatus->text().contains(QStringLiteral("向下")) &&
+                     fullRouteStatus->text().contains(QStringLiteral("400 / 1730 mm")) &&
+                     source->text().contains(QStringLiteral("按段移动距离")) &&
+                     !fullRouteStart->isEnabled(),
+                 "distance feedback changed map coordinates or failed to show progress")) return 1;
+    page.setFullRouteDistanceCompleted();
+    if (!require(fullRouteStart->isEnabled() &&
+                     fullRouteStatus->text().contains(QStringLiteral("按段距离路线完成")),
+                 "distance completion did not restore controls")) return 1;
+
     acceptNextConfirmation();
     rawPickStart->click();
     page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 4, 1);
@@ -331,6 +350,21 @@ int main(int argc, char **argv) {
                      !rawPickContinue->isEnabled() &&
                      rawPickStatus->text().contains(QStringLiteral("绿")),
                  "raw-pick route start or wait status is incorrect")) return 1;
+    page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 0, 0);
+    if (!require(rawPickStatus->text().contains(QStringLiteral("任意颜色")) &&
+                     rawPickStatus->text().contains(QStringLiteral("中心对准")) &&
+                     !rawPickStatus->text().contains(QStringLiteral("第 0 槽")) &&
+                     !rawPickContinue->isEnabled(),
+                 "any-color waiting status showed an unknown platform slot")) return 1;
+    page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 5, 1);
+    if (!require(rawPickStatus->text().contains(QStringLiteral("黑")),
+                 "second-round black material label is missing")) return 1;
+    page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 1, 2);
+    if (!require(rawPickStatus->text().contains(QStringLiteral("红")),
+                 "second-round red material label is missing")) return 1;
+    page.setRawPickRouteState(QStringLiteral("WAIT_MATERIAL"), 3, 3);
+    if (!require(rawPickStatus->text().contains(QStringLiteral("蓝")),
+                 "second-round blue material label is missing")) return 1;
     page.setRawPickRouteState(QStringLiteral("DONE"), 6, 3);
     if (!require(rawPickContinue->isEnabled() &&
                      rawPickStatus->text().contains(QStringLiteral("三件")),
@@ -344,18 +378,34 @@ int main(int argc, char **argv) {
     if (!require(!rawPickContinue->isEnabled(),
                  "raw-pick continuation acknowledgement did not close the gate")) return 1;
     page.setFullRouteRunning(false);
+    auto *taskCode = page.findChild<QLineEdit *>(QStringLiteral("missionTaskCodeEdit"));
+    if (!require(taskCode && taskCode->text().isEmpty(), "task input is missing")) return 1;
+    taskCode->setText(QStringLiteral("156+113+516+231"));
+    missionStart->click();
+    if (!require(missionZoneRequested == 0 && missionStart->isEnabled() &&
+                     missionStatus->text().contains(QStringLiteral("无效")),
+                 "invalid task started a mission")) return 1;
+    taskCode->setText(QStringLiteral("156+123+516+231"));
     acceptNextConfirmation();
     missionStart->click();
     page.setMissionPhase(QStringLiteral("QR_WAIT"), QStringLiteral("QR"));
     page.setRawPickRouteState(QStringLiteral("DONE"), 6, 3);
     if (!require(missionZoneRequested == 2 && missionRpmRequested == 100 &&
+                     !missionWaitForButtonRequested &&
+                     missionTaskRequested == QStringLiteral("156+123+516+231") &&
+                     !taskCode->isEnabled() &&
                      !missionStart->isEnabled() && !rawPickContinue->isEnabled() &&
                      missionStatus->text().contains(QStringLiteral("二维码区")) &&
+                     missionStatus->text().contains(QStringLiteral("等待四组扫码任务码")) &&
                      rawPickStatus->text().contains(QStringLiteral("自动继续")),
                  "mission start or automatic station status is incorrect")) return 1;
     page.setMissionPhase(QStringLiteral("RING_PREP"), QStringLiteral("COARSE_1"));
-    if (!require(missionStatus->text().contains(QStringLiteral("水平轴收至-500")),
+    if (!require(missionStatus->text().contains(QStringLiteral("水平轴收至-770")),
                  "ring preparation was not shown")) return 1;
+    page.setMissionPhase(QStringLiteral("RAW_EXIT_RIGHT_50"), QStringLiteral("RAW_1"));
+    if (!require(missionStatus->text().contains(QStringLiteral("合并取料补偿")) &&
+                     missionStatus->text().contains(QStringLiteral("右移50")),
+                 "combined raw pickup exit was not shown")) return 1;
     page.setFullRouteCompleted(2250, 150);
     if (!require(missionStart->isEnabled() &&
                      missionStatus->text().contains(QStringLiteral("已返回")),
@@ -366,6 +416,21 @@ int main(int argc, char **argv) {
     if (!require(missionStart->isEnabled() &&
                      missionStatus->text().contains(QStringLiteral("已停止")),
                  "mission disconnect did not restore idle status")) return 1;
+    auto *missionPrepare = page.findChild<QPushButton *>(QStringLiteral("missionPrepareButton"));
+    if (!require(missionPrepare && missionPrepare->isEnabled(),
+                 "PC9 preparation entry is missing")) return 1;
+    acceptNextConfirmation();
+    missionPrepare->click();
+    page.setMissionPhase(QStringLiteral("WAIT_BUTTON"), QStringLiteral("START"));
+    if (!require(missionWaitForButtonRequested && !missionPrepare->isEnabled() &&
+                     !missionStart->isEnabled() &&
+                     missionStatus->text().contains(QStringLiteral("等待PC9")) &&
+                     missionStatus->text().contains(QStringLiteral("启动区1")) &&
+                     missionStatus->text().contains(QStringLiteral("启动区2")),
+                 "PC9 preparation did not request button mode and show zone selection")) return 1;
+    page.setFullRouteRunning(false);
+    if (!require(missionPrepare->isEnabled() && taskCode->isEnabled(),
+                 "PC9 preparation cancellation did not restore controls")) return 1;
     page.setNavigationInitialized(false);
     if (!require(!navMove->isEnabled() &&
                      navState->text().contains(QStringLiteral("重新初始化")) &&

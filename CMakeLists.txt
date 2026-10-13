@@ -387,6 +387,9 @@ set_target_properties(test_pid_profile_baseline PROPERTIES
 )
 
 set(MECANUM_JOG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../test/mecanum_jog")
+add_executable(test_mission_task tests/test_mission_task.c)
+set_target_properties(test_mission_task PROPERTIES AUTOMOC OFF C_STANDARD 99)
+add_test(NAME test_mission_task COMMAND test_mission_task)
 add_executable(test_mecanum_straight
     ${MECANUM_JOG_DIR}/tests/test_straight.c
 )
@@ -520,3 +523,68 @@ add_test(NAME test_mecanum_route_runtime
 add_test(NAME test_mecanum_mechanism_action_runtime
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
             ${MECANUM_JOG_DIR}/tests/test_mechanism_action_runtime.ps1)
+add_test(NAME test_mecanum_raw_pick_runtime
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+            ${MECANUM_JOG_DIR}/tests/test_raw_pick_runtime.ps1)
+
+set(ROUTE_EDITOR_SOURCES
+    src/device/RouteSequenceModel.cpp
+    src/device/RouteSequenceModel.h
+    src/device/RouteSequenceRunner.cpp
+    src/device/RouteSequenceRunner.h
+    src/pages/RouteEditorPage.cpp
+    src/pages/RouteEditorPage.h
+)
+foreach(target robot_tuner test_ui_smoke)
+    target_sources(${target} PRIVATE ${ROUTE_EDITOR_SOURCES})
+endforeach()
+add_executable(test_route_editor
+    tests/test_route_editor.cpp
+    ${ROUTE_EDITOR_SOURCES}
+    src/device/MecanumJogClient.cpp
+    src/device/MecanumJogClient.h
+    src/device/MechanismActionModel.cpp
+    src/device/MechanismActionModel.h
+)
+target_include_directories(test_route_editor PRIVATE src)
+target_link_libraries(test_route_editor PRIVATE Qt6::Widgets)
+add_test(NAME test_route_editor COMMAND test_route_editor)
+set_tests_properties(test_route_editor PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+
+add_executable(test_avoidance_core ../test/mecanum_jog/tests/test_avoidance.c)
+add_executable(test_avoidance_runtime ../test/mecanum_jog/tests/test_avoidance_runtime.c)
+add_test(NAME test_avoidance_core COMMAND test_avoidance_core)
+add_test(NAME test_avoidance_runtime COMMAND test_avoidance_runtime)
+add_executable(test_avoidance_ui
+    tests/test_avoidance_ui.cpp
+    src/device/MecanumJogClient.cpp src/device/MecanumJogClient.h
+    src/device/MechanismActionModel.cpp src/device/MechanismActionModel.h
+    src/pages/FieldPositionPage.cpp src/pages/FieldPositionPage.h
+    src/widgets/SerialDebugPanel.cpp src/widgets/SerialDebugPanel.h
+)
+target_include_directories(test_avoidance_ui PRIVATE src)
+target_link_libraries(test_avoidance_ui PRIVATE Qt6::Widgets)
+add_test(NAME test_avoidance_ui COMMAND test_avoidance_ui)
+set_tests_properties(test_avoidance_ui PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+)
+
+foreach(target robot_tuner test_ui_smoke)
+    target_sources(${target} PRIVATE
+        src/device/RingCalibrationRunner.cpp
+        src/device/RingCalibrationRunner.h)
+endforeach()
+add_executable(test_ring_calibration
+    tests/test_ring_calibration.cpp
+    src/device/RingCalibrationRunner.cpp src/device/RingCalibrationRunner.h
+    src/device/MecanumJogClient.cpp src/device/MecanumJogClient.h
+    src/device/MechanismActionModel.cpp src/device/MechanismActionModel.h)
+target_include_directories(test_ring_calibration PRIVATE src)
+target_link_libraries(test_ring_calibration PRIVATE Qt6::Core)
+add_test(NAME test_ring_calibration COMMAND test_ring_calibration)
+set_tests_properties(test_ring_calibration PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")

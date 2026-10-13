@@ -18,17 +18,20 @@
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/MechanismActionPage.h"
+#include "pages/RouteEditorPage.h"
+#include "device/RouteSequenceRunner.h"
 #include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
 #include "pages/VisionPage.h"
+#include "device/RingCalibrationRunner.h"
 #include "widgets/SerialDebugPanel.h"
 
 namespace {
 
 static const QStringList kPages = {
     "总览", "场地定位", "底盘与 PID", "机械臂与舵机", "HWT101", "动作测试",
-    "临时调试", "动作录入", "串口终端", "视觉微调"
+    "临时调试", "动作录入", "串口终端", "视觉微调", "路线编辑"
 };
 
 constexpr quint8 kDefaultTelemetryMask = 0x07;
@@ -95,6 +98,8 @@ MainWindow::MainWindow(QWidget *parent)
     navigationList->setObjectName("navigationList");
     pageStack_ = new QStackedWidget(centralWidget);
     pageStack_->setObjectName("pageStack");
+    routeRunner_ = new RouteSequenceRunner(&mecanum_, this);
+    ringCalibration_ = new RingCalibrationRunner(&mecanum_, this);
 
     for (const auto &pageName : kPages) {
         navigationList->addItem(pageName);
@@ -124,6 +129,9 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (pageName == QStringLiteral("动作录入")) {
             mechanismActionPage_ = new MechanismActionPage(pageStack_);
             page = mechanismActionPage_;
+        } else if (pageName == QStringLiteral("路线编辑")) {
+            routeEditorPage_ = new RouteEditorPage(routeRunner_, pageStack_);
+            page = routeEditorPage_;
         } else if (pageName == QStringLiteral("串口终端")) {
             terminalPage_ = new TerminalPage(pageStack_);
             page = terminalPage_;
@@ -255,18 +263,39 @@ MainWindow::MainWindow(QWidget *parent)
             &mecanum_, &MecanumJogClient::navigateTo);
     connect(fieldPositionPage_, &FieldPositionPage::fullRouteRequested,
             &mecanum_, &MecanumJogClient::startFullRoute);
+    connect(fieldPositionPage_, &FieldPositionPage::avoidanceStartRequested,
+            this, [this](int zone, quint16 rpm) {
+                if (!mecanum_.startAvoidanceRun(zone, rpm))
+                    fieldPositionPage_->setAvoidanceRunning(mecanum_.avoidanceRunning());
+            });
+    connect(fieldPositionPage_, &FieldPositionPage::avoidanceStopRequested,
+            &mecanum_, &MecanumJogClient::stopAvoidanceRun);
+    connect(fieldPositionPage_, &FieldPositionPage::avoidanceStatusRequested,
+            &mecanum_, &MecanumJogClient::requestAvoidanceStatus);
+    connect(fieldPositionPage_, &FieldPositionPage::avoidanceClearRequested,
+            &mecanum_, &MecanumJogClient::clearAvoidanceMemory);
+    connect(&mecanum_, &MecanumJogClient::avoidanceStateReceived,
+            fieldPositionPage_, &FieldPositionPage::setAvoidanceStatus);
+    connect(&mecanum_, &MecanumJogClient::avoidancePathReceived,
+            fieldPositionPage_, &FieldPositionPage::setAvoidancePath);
+    connect(&mecanum_, &MecanumJogClient::avoidanceRunningChanged,
+            fieldPositionPage_, &FieldPositionPage::setAvoidanceRunning);
+    connect(&mecanum_, &MecanumJogClient::avoidanceRunningChanged,
+            visionPage_, &VisionPage::setOtherMotionRunning);
+    connect(&mecanum_, &MecanumJogClient::avoidanceError,
+            fieldPositionPage_, &FieldPositionPage::setAvoidanceError);
     connect(fieldPositionPage_, &FieldPositionPage::rawPickRouteRequested,
             &mecanum_, &MecanumJogClient::startRawPickRoute);
     connect(fieldPositionPage_, &FieldPositionPage::missionRouteRequested,
-            this, [this](int zone, quint16 rpm) {
+            this, [this](int zone, quint16 rpm, const QString &taskCode, bool waitForButton) {
                 if (mechanismActionPage_->initialServoSetupRunning()) {
                     fieldPositionPage_->setFullRouteError(
                         QStringLiteral("请等待机构页初始舵机调整完成"));
                     return;
                 }
-                mecanum_.startMissionRoute(zone, rpm,
+                mecanum_.startMissionRoute(zone, taskCode, rpm,
                     visionPage_->ring2ForwardMilli(),
-                    visionPage_->ring2RightMilli());
+                    visionPage_->ring2RightMilli(), waitForButton);
             });
     connect(fieldPositionPage_, &FieldPositionPage::rawPickRouteContinueRequested,
             &mecanum_, &MecanumJogClient::continueRawPickRoute);
@@ -286,6 +315,10 @@ MainWindow::MainWindow(QWidget *parent)
             fieldPositionPage_, &FieldPositionPage::setFullRouteEstimate);
     connect(&mecanum_, &MecanumJogClient::fullRouteStageChanged,
             fieldPositionPage_, &FieldPositionPage::setFullRouteStage);
+    connect(&mecanum_, &MecanumJogClient::fullRouteDistanceReceived,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteDistance);
+    connect(&mecanum_, &MecanumJogClient::fullRouteDistanceCompleted,
+            fieldPositionPage_, &FieldPositionPage::setFullRouteDistanceCompleted);
     connect(&mecanum_, &MecanumJogClient::fullRouteCompleted,
             fieldPositionPage_, &FieldPositionPage::setFullRouteCompleted);
     connect(&mecanum_, &MecanumJogClient::fullRouteError,
@@ -306,8 +339,43 @@ MainWindow::MainWindow(QWidget *parent)
             &MecanumJogClient::setVisionRingScale);
     connect(&mecanum_, &MecanumJogClient::visionRingScaleApplied, visionPage_,
             &VisionPage::setRingScaleApplied);
-    connect(visionPage_, &VisionPage::pauseRequested, &mecanum_,
-            &MecanumJogClient::pauseVision);
+    connect(visionPage_, &VisionPage::pauseRequested, this, [this] {
+        if (ringCalibration_->running()) ringCalibration_->stop();
+        else mecanum_.pauseVision();
+    });
+    connect(visionPage_, &VisionPage::ringCalibrationRequested, this, [this] {
+        if (mechanismActionPage_->executionBusy()) {
+            visionPage_->setCalibrationStatus(QStringLiteral("请先停止动作录入页的机构动作"));
+            return;
+        }
+        stopAutomaticSending();
+        ringCalibration_->start();
+    });
+    connect(ringCalibration_, &RingCalibrationRunner::runningChanged,
+            visionPage_, &VisionPage::setCalibrationRunning);
+    connect(ringCalibration_, &RingCalibrationRunner::progressChanged,
+            visionPage_, &VisionPage::setCalibrationStatus);
+    connect(ringCalibration_, &RingCalibrationRunner::scalesCalculated,
+            visionPage_, &VisionPage::setCalibrationScales);
+    connect(ringCalibration_, &RingCalibrationRunner::failed,
+            visionPage_, &VisionPage::setCalibrationStatus);
+    connect(ringCalibration_, &RingCalibrationRunner::completed, this, [this] {
+        visionPage_->setCalibrationStatus(
+            QStringLiteral("标定完成，比例已应用。可开始自动对准：首次全量移动，停稳复检，超差再补调。断电后需重新应用比例。"));
+    });
+    connect(ringCalibration_, &RingCalibrationRunner::runningChanged, this, [this](bool running) {
+        if (running) {
+            routeBlockedPages_.clear();
+            const QList<QWidget *> pages{fieldPositionPage_, mecanumPage_, mechanismActionPage_, routeEditorPage_, terminalPage_};
+            for (auto *page : pages) {
+                routeBlockedPages_.append(qMakePair(page, page->isEnabled()));
+                page->setEnabled(false);
+            }
+        } else {
+            for (const auto &entry : routeBlockedPages_) entry.first->setEnabled(entry.second);
+            routeBlockedPages_.clear();
+        }
+    });
     connect(visionPage_, &VisionPage::statusRequested, &mecanum_,
             &MecanumJogClient::requestVisionStatus);
     connect(visionPage_, &VisionPage::jogRequested, &mecanum_,
@@ -344,6 +412,29 @@ MainWindow::MainWindow(QWidget *parent)
             mechanismActionPage_, &MechanismActionPage::showError);
     connect(&mecanum_, &MecanumJogClient::commandFailed,
             mechanismActionPage_, &MechanismActionPage::showError);
+    connect(routeEditorPage_, &RouteEditorPage::executionRequested, this,
+            [this](const RouteSequence &sequence, int from, bool selectedOnly) {
+                if (mechanismActionPage_->executionBusy()) {
+                    routeEditorPage_->showError(
+                        QStringLiteral("请等待动作录入页的动作或初始化结束"));
+                    return;
+                }
+                stopAutomaticSending();
+                routeRunner_->start(sequence, from, selectedOnly);
+            });
+    connect(routeRunner_, &RouteSequenceRunner::runningChanged, this, [this](bool running) {
+        if (running) {
+            routeBlockedPages_.clear();
+            const QList<QWidget *> pages{fieldPositionPage_, mecanumPage_, mechanismActionPage_, visionPage_, terminalPage_};
+            for (auto *page : pages) {
+                routeBlockedPages_.append(qMakePair(page, page->isEnabled()));
+                page->setEnabled(false);
+            }
+        } else {
+            for (const auto &entry : routeBlockedPages_) entry.first->setEnabled(entry.second);
+            routeBlockedPages_.clear();
+        }
+    });
     connect(&protocol_, &ProtocolClient::requestLatencyChanged, this,
             [this](qint64 latencyMs) {
                 if (overviewPage_ != nullptr) {
@@ -526,6 +617,8 @@ void MainWindow::handleSerialOpened() {
         emergencyStopButton_->setEnabled(true);
         clearEmergencyStopButton_->setEnabled(false);
         mecanum_.setConnected(true);
+        if (serial_.isOpen()) mecanum_.requestAvoidanceStatus();
+        routeEditorPage_->setConnected(true);
         return;
     }
 
@@ -557,6 +650,7 @@ void MainWindow::handleSerialClosed() {
     connectButton_->setText(QStringLiteral("连接"));
     connectionStatusLabel_->setText(QStringLiteral("未连接"));
     mecanum_.setConnected(false);
+    routeEditorPage_->setConnected(false);
     mecanumPage_->setConnected(false);
     mecanumPage_->setEnabled(false);
     mechanismActionPage_->setConnected(false);
@@ -630,6 +724,7 @@ void MainWindow::handleParameterGroup(quint8 group,
 }
 
 void MainWindow::setDeviceControlsEnabled(bool enabled) {
+    if (routeEditorPage_) routeEditorPage_->setConnected(false);
     if (chassisPage_ != nullptr) {
         chassisPage_->setConnected(enabled);
     }
@@ -667,6 +762,7 @@ void MainWindow::setDeviceControlsEnabled(bool enabled) {
                 pageStack_->widget(index) == mecanumPage_ ||
                 pageStack_->widget(index) == mechanismActionPage_ ||
                 pageStack_->widget(index) == visionPage_ ||
+                pageStack_->widget(index) == routeEditorPage_ ||
                 pageStack_->widget(index) == terminalPage_) {
                 continue;
             }

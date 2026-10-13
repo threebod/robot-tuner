@@ -17,11 +17,11 @@ bool validPose(const MechanismPoseData &pose) {
     return pose.horizontalDmm >= -1220 && pose.horizontalDmm <= 650 &&
            pose.liftDmm >= 0 && pose.liftDmm <= 1500 &&
            pose.turretDdeg >= 0 && pose.turretDdeg <= 3600 &&
-           pose.horizontalRpm >= 10 && pose.horizontalRpm <= 2000 &&
-           pose.liftRpm >= 10 && pose.liftRpm <= 2000 &&
-           pose.horizontalAccel >= 1 && pose.horizontalAccel <= 240 &&
-           pose.liftAccel >= 1 && pose.liftAccel <= 240 &&
-           pose.turretDps10 >= 10 && pose.turretDps10 <= 1800;
+           pose.horizontalRpm >= 10 && pose.horizontalRpm <= 1200 &&
+           pose.liftRpm >= 10 && pose.liftRpm <= 1200 &&
+           pose.horizontalAccel >= 1 && pose.horizontalAccel <= 200 &&
+           pose.liftAccel >= 1 && pose.liftAccel <= 200 &&
+           pose.turretDps10 >= 10 && pose.turretDps10 <= 2200;
 }
 
 QJsonObject poseJson(const MechanismPoseData &pose) {
@@ -53,15 +53,15 @@ bool readPose(const QJsonObject &object, MechanismPoseData *pose, QString *error
                    &pose->liftDmm, error) &&
            integer(object, QStringLiteral("turretDdeg"), 0, 3600,
                    &pose->turretDdeg, error) &&
-           integer(object, QStringLiteral("horizontalRpm"), 10, 2000,
+           integer(object, QStringLiteral("horizontalRpm"), 10, 1200,
                    &pose->horizontalRpm, error) &&
-           integer(object, QStringLiteral("horizontalAccel"), 1, 240,
+           integer(object, QStringLiteral("horizontalAccel"), 1, 200,
                    &pose->horizontalAccel, error) &&
-           integer(object, QStringLiteral("liftRpm"), 10, 2000,
+           integer(object, QStringLiteral("liftRpm"), 10, 1200,
                    &pose->liftRpm, error) &&
-           integer(object, QStringLiteral("liftAccel"), 1, 240,
+           integer(object, QStringLiteral("liftAccel"), 1, 200,
                    &pose->liftAccel, error) &&
-           integer(object, QStringLiteral("turretDps10"), 10, 1800,
+           integer(object, QStringLiteral("turretDps10"), 10, 2200,
                    &pose->turretDps10, error);
 }
 
@@ -104,7 +104,7 @@ bool validateMechanismSequence(const MechanismSequence &sequence, QString *error
     if (sequence.initial.platform < 1 || sequence.initial.platform > 3 ||
         sequence.initial.gripperOpenDeg < 0 || sequence.initial.gripperOpenDeg > 270 ||
         sequence.initial.gripperCloseDeg < 0 || sequence.initial.gripperCloseDeg > 270 ||
-        sequence.initial.gripperDps10 < 10 || sequence.initial.gripperDps10 > 1800 ||
+        sequence.initial.gripperDps10 < 10 || sequence.initial.gripperDps10 > 2700 ||
         sequence.initial.platformDps10 < 10 || sequence.initial.platformDps10 > 1800)
         return fail(error, QStringLiteral("初始夹爪或平台参数越界"));
     if (sequence.loopCount < 2 || sequence.loopCount > 999)
@@ -129,9 +129,7 @@ bool validateMechanismSequence(const MechanismSequence &sequence, QString *error
     return true;
 }
 
-bool saveMechanismSequence(const QString &path, const MechanismSequence &sequence,
-                           QString *error) {
-    if (!validateMechanismSequence(sequence, error)) return false;
+QJsonObject mechanismSequenceJson(const MechanismSequence &sequence) {
     QJsonObject initial = poseJson(sequence.initial.pose);
     initial.insert(QStringLiteral("gripper"),
                    sequence.initial.gripperOpen ? QStringLiteral("open") : QStringLiteral("close"));
@@ -162,6 +160,13 @@ bool saveMechanismSequence(const QString &path, const MechanismSequence &sequenc
                      {QStringLiteral("loopCount"), sequence.loopCount},
                      {QStringLiteral("initialState"), initial},
                      {QStringLiteral("steps"), steps}};
+    return root;
+}
+
+bool saveMechanismSequence(const QString &path, const MechanismSequence &sequence,
+                           QString *error) {
+    if (!validateMechanismSequence(sequence, error)) return false;
+    const QJsonObject root = mechanismSequenceJson(sequence);
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) return fail(error, file.errorString());
     if (file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 || !file.commit())
@@ -180,6 +185,12 @@ bool loadMechanismSequence(const QString &path, MechanismSequence *sequence,
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
         return fail(error, QStringLiteral("JSON 格式错误"));
     const QJsonObject root = document.object();
+    return readMechanismSequenceJson(root, sequence, error);
+}
+
+bool readMechanismSequenceJson(const QJsonObject &root, MechanismSequence *sequence,
+                               QString *error) {
+    if (!sequence) return fail(error, QStringLiteral("输出对象为空"));
     if (root.value(QStringLiteral("version")).toInt() != 1)
         return fail(error, QStringLiteral("不支持的动作文件版本"));
     if (!root.value(QStringLiteral("name")).isString() ||
@@ -206,8 +217,9 @@ bool loadMechanismSequence(const QString &path, MechanismSequence *sequence,
         !integer(initial, QStringLiteral("gripperOpenDeg"), 0, 270, &result.initial.gripperOpenDeg, error) ||
         !integer(initial, QStringLiteral("gripperCloseDeg"), 0, 270, &result.initial.gripperCloseDeg, error))
         return false;
+    result.initial.gripperDps10 = 1200;
     if (initial.contains(QStringLiteral("gripperDps10")) &&
-        !integer(initial, QStringLiteral("gripperDps10"), 10, 1800,
+        !integer(initial, QStringLiteral("gripperDps10"), 10, 2700,
                  &result.initial.gripperDps10, error))
         return false;
     if (initial.contains(QStringLiteral("platformDps10")) &&

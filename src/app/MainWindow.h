@@ -23,6 +23,9 @@ class VisionPage;
 class FieldPositionPage;
 class MecanumJogPage;
 class MechanismActionPage;
+class RouteEditorPage;
+class RouteSequenceRunner;
+class RingCalibrationRunner;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -76,5 +79,9 @@ private:
     FieldPositionPage *fieldPositionPage_{};
     MecanumJogPage *mecanumPage_{};
     MechanismActionPage *mechanismActionPage_{};
+    RouteEditorPage *routeEditorPage_{};
+    RouteSequenceRunner *routeRunner_{};
+    RingCalibrationRunner *ringCalibration_{};
+    QList<QPair<QWidget *, bool>> routeBlockedPages_;
     bool serialConnected_{};
 };

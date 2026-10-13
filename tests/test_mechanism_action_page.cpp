@@ -2,10 +2,12 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QMetaObject>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QTimer>
 
 #include <iostream>
 
@@ -35,6 +37,10 @@ int main(int argc, char **argv) {
         page.findChild<QSpinBox *>("actionPoseHorizontalSpin");
     auto *poseLift = page.findChild<QSpinBox *>("actionPoseLiftSpin");
     auto *poseTurret = page.findChild<QSpinBox *>("actionPoseTurretSpin");
+    auto *horizontalRpm = page.findChild<QSpinBox *>("actionHorizontalRpmSpin");
+    auto *horizontalAccel = page.findChild<QSpinBox *>("actionHorizontalAccelSpin");
+    auto *liftRpm = page.findChild<QSpinBox *>("actionLiftRpmSpin");
+    auto *liftAccel = page.findChild<QSpinBox *>("actionLiftAccelSpin");
     auto *addPose = page.findChild<QPushButton *>("actionAddPoseButton");
     auto *replaceStep = page.findChild<QPushButton *>("actionReplaceStepButton");
     auto *replaceType = page.findChild<QComboBox *>("actionReplaceTypeCombo");
@@ -59,7 +65,8 @@ int main(int argc, char **argv) {
         page.findChild<QPushButton *>("actionReturnInitialButton");
     auto *stop = page.findChild<QPushButton *>("actionStopButton");
     if (!require(initialHorizontal && initialLift && initialTurret && initialize &&
-                     poseHorizontal && poseLift && poseTurret && addPose &&
+                     poseHorizontal && poseLift && poseTurret && horizontalRpm &&
+                     horizontalAccel && liftRpm && liftAccel && addPose &&
                      replaceStep &&
                      replaceType && waitOnly &&
                      horizontalSlider && liftSlider && turretSlider &&
@@ -77,13 +84,18 @@ int main(int argc, char **argv) {
                  "lift or adjustment range is incorrect")) {
         return 1;
     }
-    if (!require(gripperSpeed->value() == 1200 &&
+    if (!require(horizontalRpm->maximum() == 1200 &&
+                     liftRpm->maximum() == 1200 &&
+                     horizontalAccel->maximum() == 200 &&
+                     liftAccel->maximum() == 200,
+                 "mechanism speed or acceleration bounds are incorrect")) return 1;
+    if (!require(gripperSpeed->value() == 2700 &&
                      platformSpeed->value() == 1200 &&
                      turretSpeed->value() == 1200 &&
-                     gripperSpeed->maximum() == 1800 &&
+                     gripperSpeed->maximum() == 2700 &&
                      platformSpeed->maximum() == 1800 &&
-                     turretSpeed->maximum() == 1800,
-                 "servo speed controls do not default to 120 or allow 180 degrees per second")) {
+                     turretSpeed->maximum() == 2200,
+                 "gripper speed does not default to 270 degrees per second")) {
         return 1;
     }
 
@@ -116,12 +128,12 @@ int main(int argc, char **argv) {
     }
     page.handleDeviceLine(QStringLiteral("MECH INIT H=-100 L=420 T=684"));
     page.setMechanismEstimate(initialized.front(), QStringLiteral("IDLE"));
-    if (!require(commands == QStringList({QStringLiteral("servo 2 70 1200")}) &&
+    if (!require(commands == QStringList({QStringLiteral("servo 2 90 2700")}) &&
                      !horizontalSlider->isEnabled(),
                  "initial confirmation did not command the gripper first")) {
         return 1;
     }
-    page.handleDeviceLine(QStringLiteral("OK servo=2 angle=70"));
+    page.handleDeviceLine(QStringLiteral("OK servo=2 angle=90"));
     if (!require(commands.back() == QStringLiteral("servo 3 26 1200") &&
                      !horizontalSlider->isEnabled(),
                  "platform command was sent before the gripper finished")) {
@@ -218,8 +230,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     playSelected->click();
-    page.handleDeviceLine(QStringLiteral("OK servo=2 angle=70 pulse=1500us"));
-    if (!require(commands == QStringList({QStringLiteral("servo 2 70 1800")}),
+    page.handleDeviceLine(QStringLiteral("OK servo=2 angle=90 pulse=1500us"));
+    if (!require(commands == QStringList({QStringLiteral("servo 2 90 1800")}),
                  "an immediate servo step did not complete correctly")) {
         return 1;
     }
@@ -231,19 +243,59 @@ int main(int argc, char **argv) {
         return 1;
     }
     page.setMechanismCompleted(moved.back());
-    page.handleDeviceLine(QStringLiteral("DONE servo=2 angle=70"));
+    page.handleDeviceLine(QStringLiteral("DONE servo=2 angle=90"));
     if (!require(moved.size() == 6,
                  "loop replay did not dispatch its second cycle")) {
         return 1;
     }
     page.setMechanismCompleted(moved.back());
-    page.handleDeviceLine(QStringLiteral("DONE servo=2 angle=70"));
+    page.handleDeviceLine(QStringLiteral("DONE servo=2 angle=90"));
     if (!require(playAll->isEnabled(),
                  "loop replay did not stop after the configured count")) {
         return 1;
     }
+    table->selectRow(0);
+    horizontalRpm->setValue(1000);
+    horizontalAccel->setValue(200);
+    liftRpm->setValue(1000);
+    liftAccel->setValue(200);
+    replaceStep->click();
+    table->selectRow(1);
+    replaceType->setCurrentIndex(
+        replaceType->findData(static_cast<int>(MechanismStepType::Pose)));
+    horizontalRpm->setValue(1000);
+    horizontalAccel->setValue(200);
+    liftRpm->setValue(1000);
+    liftAccel->setValue(200);
+    replaceStep->click();
+    int confirmations = 0;
+    QTimer confirmationTimer;
+    QObject::connect(&confirmationTimer, &QTimer::timeout, [&] {
+        auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        ++confirmations;
+        dialog->button(QMessageBox::Yes)->click();
+    });
+    confirmationTimer.start(1);
+    const int beforeHighSpeed = moved.size();
+    playAll->click();
+    for (int index = 0; index < 4 && moved.size() == beforeHighSpeed + index + 1;
+         ++index) {
+        page.setMechanismCompleted(moved.back());
+    }
+    confirmationTimer.stop();
+    if (!require(confirmations == 1 && moved.size() == beforeHighSpeed + 4 &&
+                     playAll->isEnabled(),
+                 "high-speed loop requested confirmation more than once")) {
+        return 1;
+    }
+    horizontalRpm->setValue(30);
+    horizontalAccel->setValue(50);
+    liftRpm->setValue(30);
+    liftAccel->setValue(50);
     returnInitial->click();
-    if (!require(moved.size() == 7 && moved.back().horizontalDmm == -100,
+    if (!require(moved.size() == beforeHighSpeed + 5 &&
+                     moved.back().horizontalDmm == -100,
                  "return-to-initial did not dispatch the recorded initial pose")) {
         return 1;
     }

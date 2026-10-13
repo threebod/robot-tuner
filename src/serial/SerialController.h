@@ -19,6 +19,7 @@ public:
 
     QStringList availablePorts() const;
     bool open(QString portName, qint32 baudRate);
+    bool isOpen() const { return serialPort_.isOpen(); }
     void close();
     qint64 write(QByteArrayView bytes);
     void setProtocolEnabled(bool enabled);

@@ -23,6 +23,9 @@ public:
                          int quality, int iteration);
     void showVisionError(const QString &error);
     void setRingScaleApplied(int ring, int forwardMilli, int rightMilli);
+    void setCalibrationRunning(bool running);
+    void setCalibrationStatus(const QString &status);
+    void setCalibrationScales(int forwardMilli, int rightMilli);
     int ring2ForwardMilli() const { return forwardScales_[1]; }
     int ring2RightMilli() const { return rightScales_[1]; }
 
@@ -33,6 +36,7 @@ signals:
     void pauseRequested();
     void statusRequested();
     void jogRequested(int forwardMm, int rightMm, int rpm);
+    void ringCalibrationRequested();
 
 private:
     void rebuildTargets();
@@ -48,11 +52,14 @@ private:
     QDoubleSpinBox *rightScaleSpin_{};
     QPushButton *applyScaleButton_{};
     QLabel *scaleLabel_{};
+    QPushButton *calibrateButton_{};
+    QLabel *calibrationLabel_{};
     std::array<int, 3> forwardScales_{{640, 640, 640}};
     std::array<int, 3> rightScales_{{673, 673, 673}};
     std::array<bool, 3> scalesApplied_{{false, false, false}};
     QPushButton *startButton_{};
     QPushButton *pauseButton_{};
+    QPushButton *statusButton_{};
     QWidget *jogControls_{};
     QLabel *stateLabel_{};
     QLabel *sampleLabel_{};
@@ -60,4 +67,5 @@ private:
     bool otherMotionRunning_{};
     bool running_{};
     bool manualEnabled_{};
+    bool calibrationRunning_{};
 };

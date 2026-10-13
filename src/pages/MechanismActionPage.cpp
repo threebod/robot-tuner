@@ -71,10 +71,10 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
                                   position);
     }
     gripperOpenAngle_ = spin(initialGroup, "actionGripperOpenAngleSpin", 0, 270,
-                             70, QStringLiteral("°"));
+                             90, QStringLiteral("°"));
     gripperCloseAngle_ = spin(initialGroup, "actionGripperCloseAngleSpin", 0,
                               270, 35, QStringLiteral("°"));
-    gripperSpeed_ = spin(initialGroup, "actionGripperSpeedSpin", 10, 1800, 1200,
+    gripperSpeed_ = spin(initialGroup, "actionGripperSpeedSpin", 10, 2700, 2700,
                          QStringLiteral(" ×0.1°/s"));
     platformSpeed_ = spin(initialGroup, "actionPlatformSpeedSpin", 10, 1800, 1200,
                           QStringLiteral(" ×0.1°/s"));
@@ -177,13 +177,13 @@ MechanismActionPage::MechanismActionPage(QWidget *parent) : QWidget(parent) {
     poseHorizontal_ = spin(poseGroup, "actionPoseHorizontalSpin", -1220, 650, 0);
     poseLift_ = spin(poseGroup, "actionPoseLiftSpin", 0, 1500, 0);
     poseTurret_ = spin(poseGroup, "actionPoseTurretSpin", 0, 3600, 0);
-    horizontalRpm_ = spin(poseGroup, "actionHorizontalRpmSpin", 10, 2000, 30,
+    horizontalRpm_ = spin(poseGroup, "actionHorizontalRpmSpin", 10, 1200, 30,
                           QStringLiteral(" RPM"));
-    horizontalAccel_ = spin(poseGroup, "actionHorizontalAccelSpin", 1, 240, 50);
-    liftRpm_ = spin(poseGroup, "actionLiftRpmSpin", 10, 2000, 30,
+    horizontalAccel_ = spin(poseGroup, "actionHorizontalAccelSpin", 1, 200, 50);
+    liftRpm_ = spin(poseGroup, "actionLiftRpmSpin", 10, 1200, 30,
                     QStringLiteral(" RPM"));
-    liftAccel_ = spin(poseGroup, "actionLiftAccelSpin", 1, 240, 50);
-    turretSpeed_ = spin(poseGroup, "actionTurretSpeedSpin", 10, 1800, 1200,
+    liftAccel_ = spin(poseGroup, "actionLiftAccelSpin", 1, 200, 50);
+    turretSpeed_ = spin(poseGroup, "actionTurretSpeedSpin", 10, 2200, 1200,
                         QStringLiteral(" ×0.1°/s"));
     stepWait_ = spin(poseGroup, "actionStepWaitSpin", 0, 60000, 0,
                      QStringLiteral(" ms"));
@@ -823,6 +823,16 @@ void MechanismActionPage::startReplay(QVector<MechanismStep> steps,
                                       const QString &description,
                                       int cycleCount) {
     if (!connected_ || !initialized_ || replaying_ || steps.isEmpty()) return;
+    for (const MechanismStep &step : steps) {
+        if (step.type == MechanismStepType::Pose &&
+            (step.pose.horizontalRpm > 120 || step.pose.liftRpm > 120)) {
+            if (!confirmHighSpeed(step.pose)) {
+                stateLabel_->setText(QStringLiteral("已取消高速动作"));
+                return;
+            }
+            break;
+        }
+    }
     replaySteps_ = std::move(steps);
     replayIndex_ = 0;
     replayCycle_ = 1;
@@ -863,11 +873,6 @@ void MechanismActionPage::dispatchCurrentStep() {
               .arg(stepDescription(step));
     stateLabel_->setText(progress);
     if (step.type == MechanismStepType::Pose) {
-        if (!confirmHighSpeed(step.pose)) {
-            cancelReplay();
-            stateLabel_->setText(QStringLiteral("已取消高速动作"));
-            return;
-        }
         emit poseRequested(step.pose);
         return;
     }

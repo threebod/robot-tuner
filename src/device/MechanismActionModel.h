@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QVector>
+#include <QJsonObject>
 
 #include <array>
 
@@ -20,9 +21,9 @@ struct MechanismInitialData {
     MechanismPoseData pose;
     bool gripperOpen{true};
     int platform{1};
-    int gripperOpenDeg{70};
+    int gripperOpenDeg{90};
     int gripperCloseDeg{35};
-    int gripperDps10{1200};
+    int gripperDps10{2700};
     int platformDps10{1200};
     std::array<int, 3> platformDeg{26, 146, 264};
 };
@@ -46,6 +47,9 @@ struct MechanismSequence {
 };
 
 bool validateMechanismSequence(const MechanismSequence &sequence,
+                               QString *error = nullptr);
+QJsonObject mechanismSequenceJson(const MechanismSequence &sequence);
+bool readMechanismSequenceJson(const QJsonObject &root, MechanismSequence *sequence,
                                QString *error = nullptr);
 bool loadMechanismSequence(const QString &path, MechanismSequence *sequence,
                            QString *error = nullptr);

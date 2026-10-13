@@ -41,16 +41,24 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
     automaticLayout->addRow(QStringLiteral("前后 mm/像素（向右→后退）"), forwardScaleSpin_);
     automaticLayout->addRow(QStringLiteral("左右 mm/像素（向下→左移）"), rightScaleSpin_);
     automaticLayout->addRow(applyScaleButton_, scaleLabel_);
+    calibrateButton_ = new QPushButton(QStringLiteral("自动标定圆环 2 比例"), automatic);
+    calibrateButton_->setObjectName(QStringLiteral("visionCalibrateButton"));
+    calibrationLabel_ = new QLabel(
+        QStringLiteral("前后、左右各往返 20 mm（15 RPM）。请使用实际圆环识别姿态，保持圆环 2 可见，并确认移动净空。"), automatic);
+    calibrationLabel_->setObjectName(QStringLiteral("visionCalibrationLabel"));
+    calibrationLabel_->setWordWrap(true);
+    automaticLayout->addRow(calibrateButton_);
+    automaticLayout->addRow(calibrationLabel_);
     auto *automaticButtons = new QHBoxLayout;
     startButton_ = new QPushButton(QStringLiteral("开始自动对准"), automatic);
     startButton_->setObjectName(QStringLiteral("visionStartButton"));
     pauseButton_ = new QPushButton(QStringLiteral("暂停并接管"), automatic);
     pauseButton_->setObjectName(QStringLiteral("visionPauseButton"));
-    auto *statusButton = new QPushButton(QStringLiteral("刷新状态"), automatic);
-    statusButton->setObjectName(QStringLiteral("visionStatusButton"));
+    statusButton_ = new QPushButton(QStringLiteral("刷新状态"), automatic);
+    statusButton_->setObjectName(QStringLiteral("visionStatusButton"));
     automaticButtons->addWidget(startButton_);
     automaticButtons->addWidget(pauseButton_);
-    automaticButtons->addWidget(statusButton);
+    automaticButtons->addWidget(statusButton_);
     automaticLayout->addRow(automaticButtons);
     layout->addWidget(automatic);
 
@@ -142,7 +150,9 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
     });
     connect(pauseButton_, &QPushButton::clicked, this,
             &VisionPage::pauseRequested);
-    connect(statusButton, &QPushButton::clicked, this,
+    connect(calibrateButton_, &QPushButton::clicked, this,
+            &VisionPage::ringCalibrationRequested);
+    connect(statusButton_, &QPushButton::clicked, this,
             &VisionPage::statusRequested);
     rebuildTargets();
     refreshControls();
@@ -154,6 +164,7 @@ void VisionPage::setConnected(bool connected) {
         scalesApplied_.fill(false);
         running_ = false;
         manualEnabled_ = false;
+        calibrationRunning_ = false;
         stateLabel_->setText(QStringLiteral("状态：未连接"));
         scaleLabel_->setText(QStringLiteral("连接断开；请重新确认主控比例"));
     }
@@ -222,6 +233,23 @@ void VisionPage::setRingScaleApplied(int ring, int forwardMilli, int rightMilli)
     refreshControls();
 }
 
+void VisionPage::setCalibrationRunning(bool running) {
+    calibrationRunning_ = running;
+    pauseButton_->setText(running ? QStringLiteral("停止标定") : QStringLiteral("暂停并接管"));
+    refreshControls();
+}
+
+void VisionPage::setCalibrationStatus(const QString &status) {
+    calibrationLabel_->setText(status);
+}
+
+void VisionPage::setCalibrationScales(int forwardMilli, int rightMilli) {
+    forwardScales_[1] = forwardMilli;
+    rightScales_[1] = rightMilli;
+    scalesApplied_[1] = false;
+    refreshScaleInputs();
+}
+
 void VisionPage::rebuildTargets() {
     targetCombo_->clear();
     startButton_->setText(modeCombo_->currentData().toInt() == 1
@@ -258,7 +286,8 @@ void VisionPage::refreshScaleInputs() {
 }
 
 void VisionPage::refreshControls() {
-    const bool canScale = connected_ && !running_ && !manualEnabled_ &&
+    const bool busy = running_ || calibrationRunning_;
+    const bool canScale = connected_ && !busy && !manualEnabled_ &&
                           !otherMotionRunning_ &&
                           modeCombo_->currentData().toInt() == 2;
     forwardScaleSpin_->setEnabled(canScale);
@@ -269,18 +298,23 @@ void VisionPage::refreshControls() {
     rightScaleSpin_->setVisible(modeCombo_->currentData().toInt() == 2);
     applyScaleButton_->setVisible(modeCombo_->currentData().toInt() == 2);
     const int ring = targetCombo_->currentData().toInt();
+    const bool canCalibrate = modeCombo_->currentData().toInt() == 2 && ring == 2;
+    calibrateButton_->setVisible(canCalibrate);
+    calibrationLabel_->setVisible(canCalibrate);
+    calibrateButton_->setEnabled(connected_ && canCalibrate && !busy && !otherMotionRunning_);
     const bool ringReady = modeCombo_->currentData().toInt() != 2 ||
                            (ring >= 1 && ring <= 3 && scalesApplied_[ring - 1]);
-    startButton_->setEnabled(connected_ && !running_ && !otherMotionRunning_ &&
+    startButton_->setEnabled(connected_ && !busy && !otherMotionRunning_ &&
                              ringReady);
-    pauseButton_->setEnabled(connected_ && running_);
-    modeCombo_->setEnabled(connected_ && !running_);
-    targetCombo_->setEnabled(connected_ && !running_);
-    jogControls_->setEnabled(connected_ && manualEnabled_ && !running_ &&
+    pauseButton_->setEnabled(connected_ && busy);
+    statusButton_->setEnabled(connected_ && !calibrationRunning_);
+    modeCombo_->setEnabled(connected_ && !busy);
+    targetCombo_->setEnabled(connected_ && !busy);
+    jogControls_->setEnabled(connected_ && manualEnabled_ && !busy &&
                              !otherMotionRunning_);
-    stepCombo_->setEnabled(connected_ && manualEnabled_ && !running_ &&
+    stepCombo_->setEnabled(connected_ && manualEnabled_ && !busy &&
                            !otherMotionRunning_);
-    rpmSpin_->setEnabled(connected_ && manualEnabled_ && !running_ &&
+    rpmSpin_->setEnabled(connected_ && manualEnabled_ && !busy &&
                          !otherMotionRunning_);
 }
 

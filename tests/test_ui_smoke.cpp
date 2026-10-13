@@ -30,6 +30,8 @@
 #include "pages/ImuPage.h"
 #include "pages/MechanismPage.h"
 #include "pages/MechanismActionPage.h"
+#include "pages/RouteEditorPage.h"
+#include "device/RouteSequenceRunner.h"
 #include "pages/MecanumJogPage.h"
 #include "pages/OverviewPage.h"
 #include "pages/TerminalPage.h"
@@ -197,7 +199,7 @@ int main(int argc, char **argv) {
     auto *device = window.findChild<DeviceClient *>();
     auto *serialController = window.findChild<SerialController *>();
     auto *heartbeatTimer = window.findChild<QTimer *>("heartbeatTimer");
-    if (!require(nav && nav->count() == 10, "navigation pages changed") ||
+    if (!require(nav && nav->count() == 11, "navigation pages changed") ||
         !require(fieldPositionPage && fieldPositionPage->isEnabled() &&
                      window.findChild<FieldMapWidget *>("fieldMapWidget"),
                  "field position navigation page is missing or disabled") ||
@@ -1038,7 +1040,7 @@ int main(int argc, char **argv) {
     if (!require(textWrites ==
                      QList<QByteArray>({QByteArray("nav init 1\r\n"),
                                         QByteArray("arm\r\n"),
-                                        QByteArray("nav goto 1200 2080 60\r\n")}),
+                                        QByteArray("nav goto 1200 2080 200\r\n")}),
                  "map navigation UI is not wired to the text client")) {
         return 1;
     }
@@ -1166,6 +1168,39 @@ int main(int argc, char **argv) {
     if (!require(textWrites.isEmpty(), "HEX bypass allowed a batch of text commands")) {
         return 1;
     }
+
+    MainWindow routeWindow;
+    auto *routePage = routeWindow.findChild<RouteEditorPage *>("路线编辑");
+    auto *routeClient = routeWindow.findChild<MecanumJogClient *>();
+    auto *routeRunner = routeWindow.findChild<RouteSequenceRunner *>();
+    auto *routeEmergency = routeWindow.findChild<QPushButton *>("emergencyStopButton");
+    if (!require(routePage && routePage->isEnabled() && routeRunner &&
+                     routePage->findChild<QPushButton *>("routeAdd")->isEnabled() &&
+                     !routePage->findChild<QPushButton *>("routeRunAll")->isEnabled(),
+                 "route editor must remain usable offline")) return 1;
+    routeWindow.findChild<QComboBox *>("deviceModeCombo")->setCurrentIndex(1);
+    QMetaObject::invokeMethod(&routeWindow, "handleSerialOpened", Qt::DirectConnection);
+    RouteSequence routeSequence;
+    RouteStep routeConfirm; routeConfirm.type = RouteStepType::Confirm;
+    routeSequence.steps = {routeConfirm}; routePage->setSequence(routeSequence);
+    emit routePage->executionRequested(routeSequence, 0, false);
+    if (!require(routeRunner->awaitingConfirmation() && routeEmergency->isEnabled() &&
+                     !routeWindow.findChild<MechanismActionPage *>()->isEnabled() &&
+                     !routeWindow.findChild<FieldPositionPage *>()->isEnabled() &&
+                     !routeWindow.findChild<TerminalPage *>()->isEnabled() &&
+                     !routeClient->sendCommand("servo 2 70"),
+                 "route execution must exclusively own motion controls and preserve emergency stop")) return 1;
+    routePage->findChild<QPushButton *>("routeConfirm")->click(); waitFor(5);
+    if (!require(!routeRunner->running() && routeWindow.findChild<MechanismActionPage *>()->isEnabled(),
+                 "route completion did not restore other controls")) return 1;
+    emit routePage->executionRequested(routeSequence, 0, false);
+    routeEmergency->click(); waitFor(5);
+    if (!require(!routeRunner->running(), "global emergency stop did not cancel route confirmation")) return 1;
+    emit routePage->executionRequested(routeSequence, 0, false);
+    QMetaObject::invokeMethod(&routeWindow, "handleSerialClosed", Qt::DirectConnection);
+    if (!require(!routeRunner->running() && routePage->findChild<QPushButton *>("routeAdd")->isEnabled() &&
+                     !routePage->findChild<QPushButton *>("routeRunAll")->isEnabled(),
+                 "disconnect must cancel execution and preserve offline editing")) return 1;
 
     MainWindow cycleWindow;
     cycleWindow.findChild<QComboBox *>("deviceModeCombo")->setCurrentIndex(0);

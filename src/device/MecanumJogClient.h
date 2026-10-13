@@ -7,6 +7,7 @@
 #include <QTimer>
 
 #include "device/MechanismActionModel.h"
+#include "device/AvoidanceTypes.h"
 
 class MecanumJogClient : public QObject {
     Q_OBJECT
@@ -20,12 +21,18 @@ public:
     bool sendArmedCommand(QString command);
     bool emergencyStop();
     bool initializeNavigation(int startZone);
-    bool navigateTo(qint32 xMm, qint32 yMm, quint16 rpm = 60);
+    bool navigateTo(qint32 xMm, qint32 yMm, quint16 rpm = 200);
     bool navigationInitialized() const;
-    bool startFullRoute(int startZone, quint16 rpm = 60);
-    bool startRawPickRoute(int startZone, quint16 rpm = 60);
-    bool startMissionRoute(int startZone, quint16 rpm = 60,
-                           int forwardMilli = 640, int rightMilli = 673);
+    bool startFullRoute(int startZone, quint16 rpm = 200);
+    bool startAvoidanceRun(int startZone, quint16 rpm = 30);
+    bool stopAvoidanceRun();
+    bool requestAvoidanceStatus();
+    bool clearAvoidanceMemory();
+    bool avoidanceRunning() const { return avoidanceRunning_; }
+    bool startRawPickRoute(int startZone, quint16 rpm = 200);
+    bool startMissionRoute(int startZone, const QString &taskCode, quint16 rpm = 200,
+                           int forwardMilli = 640, int rightMilli = 673,
+                           bool waitForButton = false);
     bool continueRawPickRoute();
     bool fullRouteRunning() const;
     bool initializeMechanism(const MechanismPoseData &pose);
@@ -39,8 +46,17 @@ public:
     bool requestVisionStatus();
     bool jogVision(int forwardMm, int rightMm, int rpm);
     bool visionRunning() const;
+    bool beginRouteExecution();
+    void endRouteExecution();
+    bool sendRouteCommand(const QString &command, bool armed);
+    bool connected() const { return connected_; }
 
 signals:
+    void connectionChanged(bool connected);
+    void avoidanceStateReceived(AvoidanceStatus status);
+    void avoidancePathReceived(QVector<QPointF> path);
+    void avoidanceRunningChanged(bool running);
+    void avoidanceError(QString reason);
     void bytesReady(QByteArray bytes);
     void lineReceived(QString line);
     void commandStateChanged(QString state);
@@ -56,6 +72,10 @@ signals:
                                    QString stage, qint32 targetX,
                                    qint32 targetY);
     void fullRouteStageChanged(int index, QString stage);
+    void fullRouteDistanceReceived(int index, QString direction, qint32 distanceMm,
+                                   qint32 progressMm, double yawDegrees,
+                                   QString state, QString stage);
+    void fullRouteDistanceCompleted();
     void fullRouteRunningChanged(bool running);
     void fullRouteCompleted(qint32 xMm, qint32 yMm);
     void fullRouteError(QString reason);
@@ -78,6 +98,8 @@ signals:
 private:
     bool validCommand(const QString &command) const;
     void handleLine(const QString &line);
+    bool handleAvoidanceLine(const QString &line);
+    void setAvoidanceRunning(bool running);
     void failPending(const QString &reason);
     void invalidateNavigation();
     void invalidateMechanism();
@@ -91,16 +113,25 @@ private:
     QString pendingCommand_;
     QTimer heartbeatTimer_;
     QTimer armTimer_;
+    QTimer avoidanceStartTimer_;
+    bool avoidanceRunning_{};
+    int avoidancePathVersion_{-1}, avoidancePathExpected_{};
+    QVector<QPointF> avoidancePathStaging_;
     QTimer missionSetupTimer_;
     int missionSetupStage_{};
+    QString missionTaskCode_;
     int missionStartZone_{};
     quint16 missionRpm_{};
     int missionForwardMilli_{};
     int missionRightMilli_{};
     bool missionSetupDispatch_{};
+    bool missionWaitForButton_{};
     bool connected_{};
     bool navigationInitialized_{};
     bool mechanismInitialized_{};
     bool fullRouteRunning_{};
     bool visionRunning_{};
+    bool routeExecution_{};
+    bool routeDispatch_{};
+    bool otherMotionRunning_{};
 };

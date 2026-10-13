@@ -34,7 +34,7 @@ int main() {
 
     MechanismStep pose;
     pose.type = MechanismStepType::Pose;
-    pose.pose = {-480, 1500, 684, 1000, 230, 2000, 240, 130};
+    pose.pose = {-480, 1500, 684, 1200, 200, 1200, 200, 130};
     pose.waitMs = 500;
     source.steps.push_back(pose);
     MechanismStep gripper;
@@ -79,6 +79,24 @@ int main() {
         return 1;
     }
 
+    MechanismSequence speedLimit = source;
+    speedLimit.initial.pose.turretDps10 = 2200;
+    speedLimit.steps[0].pose.turretDps10 = 2200;
+    const QString speedPath = directory.filePath(QStringLiteral("speed.json"));
+    MechanismSequence speedLoaded;
+    if (!require(saveMechanismSequence(speedPath, speedLimit, &error) &&
+                     loadMechanismSequence(speedPath, &speedLoaded, &error) &&
+                     speedLoaded.initial.pose.turretDps10 == 2200 &&
+                     speedLoaded.steps[0].pose.turretDps10 == 2200,
+                 "220 dps turret sequence did not round trip")) return 1;
+    speedLimit.initial.pose.turretDps10 = 2201;
+    if (!require(!validateMechanismSequence(speedLimit, &error),
+                 "initial turret accepted speed above 220 dps")) return 1;
+    speedLimit.initial.pose.turretDps10 = 2200;
+    speedLimit.steps[0].pose.turretDps10 = 2201;
+    if (!require(!validateMechanismSequence(speedLimit, &error),
+                 "step turret accepted speed above 220 dps")) return 1;
+
     QFile legacyFile(path);
     if (!legacyFile.open(QIODevice::ReadOnly)) return 1;
     QJsonObject legacyRoot = QJsonDocument::fromJson(legacyFile.readAll()).object();
@@ -120,23 +138,31 @@ int main() {
         return 1;
     }
     source.initial.pose.horizontalDmm = -10;
-    source.initial.gripperDps10 = 1801;
+    source.initial.gripperDps10 = 2701;
     if (!require(!validateMechanismSequence(source, &error),
                  "out-of-range gripper speed was accepted")) {
         return 1;
     }
-    source.initial.gripperDps10 = 1800;
+    source.initial.gripperDps10 = 2700;
     source.steps[0].pose.liftDmm = 1501;
     if (!require(!validateMechanismSequence(source, &error),
                  "out-of-range lift pose was accepted")) {
         return 1;
     }
     source.steps[0].pose.liftDmm = 1500;
+    source.steps[0].pose.horizontalRpm = 1201;
+    if (!require(!validateMechanismSequence(source, &error),
+                 "horizontal speed above 1200 was accepted")) return 1;
+    source.steps[0].pose.horizontalRpm = 1200;
+    source.steps[0].pose.liftAccel = 201;
+    if (!require(!validateMechanismSequence(source, &error),
+                 "lift acceleration above 200 was accepted")) return 1;
+    source.steps[0].pose.liftAccel = 200;
     const QString exported = exportMechanismActionC(source, &error);
     if (!require(!exported.isEmpty(), "valid sequence did not export") ||
         !require(exported.contains(QStringLiteral("MECH_INITIAL_STATE")),
                  "C export is missing the initial-state macro") ||
-        !require(exported.contains(QStringLiteral("130, 1800, 1700, 1, 2")),
+        !require(exported.contains(QStringLiteral("130, 2700, 1700, 1, 2")),
                  "C export is missing initial speeds or servo state") ||
         !require(exported.contains(QStringLiteral("MECH_POSE(-480, 1500, 684")),
                  "C export is missing the maximum lift pose") ||

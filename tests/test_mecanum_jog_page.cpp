@@ -117,10 +117,11 @@ int main(int argc, char **argv) {
         !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
-    if (!require(routeTurnRpm->value() == 45 &&
-                     routeLateralRpm->value() == 60 &&
+    if (!require(routeRpm->value() == 200 && routeRpm->maximum() == 250 &&
+                     routeTurnRpm->value() == 230 && routeTurnRpm->maximum() == 250 &&
+                     routeLateralRpm->value() == 150 &&
                      routeLateralRpm->minimum() == 10 &&
-                     routeLateralRpm->maximum() == 120,
+                     routeLateralRpm->maximum() == 250,
                  "route speed limit controls are incorrect")) {
         return 1;
     }
@@ -150,9 +151,9 @@ int main(int argc, char **argv) {
     if (!require(auxDistance->minimum() == -135.0 &&
                      auxDistance->maximum() == 135.0 &&
                      auxDistanceRpm->minimum() == 10 &&
-                     auxDistanceRpm->maximum() == 2000 &&
+                     auxDistanceRpm->maximum() == 1200 &&
                      auxDistanceAccel->minimum() == 1 &&
-                     auxDistanceAccel->maximum() == 240,
+                     auxDistanceAccel->maximum() == 200,
                  "auxiliary distance parameter bounds are incorrect")) {
         return 1;
     }
