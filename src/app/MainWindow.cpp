@@ -335,6 +335,19 @@ MainWindow::MainWindow(QWidget *parent)
             &MecanumJogClient::startVisionMaterialPickup);
     connect(visionPage_, &VisionPage::ringAlignmentRequested, &mecanum_,
             &MecanumJogClient::startVisionRingAlignment);
+    connect(visionPage_, &VisionPage::materialScaleRequested, this, [this](int forward, int right) {
+        mecanum_.sendArmedCommand(QStringLiteral("vision scale material %1 %2").arg(forward).arg(right));
+    });
+    connect(&mecanum_, &MecanumJogClient::visionMaterialScaleApplied,
+            visionPage_, &VisionPage::setMaterialScaleApplied);
+    connect(visionPage_, &VisionPage::materialCalibrationRequested, this, [this](int color) {
+        if (mechanismActionPage_->executionBusy()) {
+            visionPage_->setCalibrationStatus(QStringLiteral("请先停止动作录入页的机构动作"));
+            return;
+        }
+        stopAutomaticSending();
+        ringCalibration_->startMaterial(color);
+    });
     connect(visionPage_, &VisionPage::ringScaleRequested, &mecanum_,
             &MecanumJogClient::setVisionRingScale);
     connect(&mecanum_, &MecanumJogClient::visionRingScaleApplied, visionPage_,
@@ -361,7 +374,7 @@ MainWindow::MainWindow(QWidget *parent)
             visionPage_, &VisionPage::setCalibrationStatus);
     connect(ringCalibration_, &RingCalibrationRunner::completed, this, [this] {
         visionPage_->setCalibrationStatus(
-            QStringLiteral("标定完成，比例已应用。可开始自动对准：首次全量移动，停稳复检，超差再补调。断电后需重新应用比例。"));
+            QStringLiteral("标定完成，比例已由主控确认并应用。断电后恢复固件默认比例。"));
     });
     connect(ringCalibration_, &RingCalibrationRunner::runningChanged, this, [this](bool running) {
         if (running) {

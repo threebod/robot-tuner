@@ -117,7 +117,12 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
             [this] { refreshScaleInputs(); });
     connect(forwardScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         const int ring = targetCombo_->currentData().toInt();
-        if (modeCombo_->currentData().toInt() == 2 && ring >= 1 && ring <= 3) {
+        if (modeCombo_->currentData().toInt() == 1) {
+            materialForward_ = qRound(value * 1000.0);
+            materialApplied_ = false;
+            scaleLabel_->setText(QStringLiteral("比例已修改，待应用"));
+            refreshControls();
+        } else if (ring >= 1 && ring <= 3) {
             forwardScales_[ring - 1] = qRound(value * 1000.0);
             scalesApplied_[ring - 1] = false;
             scaleLabel_->setText(QStringLiteral("比例已修改，待应用"));
@@ -126,7 +131,12 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
     });
     connect(rightScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         const int ring = targetCombo_->currentData().toInt();
-        if (modeCombo_->currentData().toInt() == 2 && ring >= 1 && ring <= 3) {
+        if (modeCombo_->currentData().toInt() == 1) {
+            materialRight_ = qRound(value * 1000.0);
+            materialApplied_ = false;
+            scaleLabel_->setText(QStringLiteral("比例已修改，待应用"));
+            refreshControls();
+        } else if (ring >= 1 && ring <= 3) {
             rightScales_[ring - 1] = qRound(value * 1000.0);
             scalesApplied_[ring - 1] = false;
             scaleLabel_->setText(QStringLiteral("比例已修改，待应用"));
@@ -135,10 +145,17 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
     });
     connect(applyScaleButton_, &QPushButton::clicked, this, [this] {
         const int ring = targetCombo_->currentData().toInt();
-        if (ring >= 1 && ring <= 3) {
+        if (modeCombo_->currentData().toInt() == 1) {
+            scaleLabel_->setText(QStringLiteral("等待主控确认"));
+            calibrationLabel_->setText(QStringLiteral("手动比例等待主控确认"));
+            emit materialScaleRequested(materialForward_, materialRight_);
+        } else if (ring >= 1 && ring <= 3) {
+            scaleLabel_->setText(QStringLiteral("等待主控确认"));
+            if (ring == 2) {
+                calibrationLabel_->setText(QStringLiteral("手动比例等待主控确认"));
+            }
             emit ringScaleRequested(ring, forwardScales_[ring - 1],
                                     rightScales_[ring - 1]);
-            scaleLabel_->setText(QStringLiteral("等待主控确认"));
         }
     });
     connect(startButton_, &QPushButton::clicked, this, [this] {
@@ -151,7 +168,11 @@ VisionPage::VisionPage(QWidget *parent) : QWidget(parent) {
     connect(pauseButton_, &QPushButton::clicked, this,
             &VisionPage::pauseRequested);
     connect(calibrateButton_, &QPushButton::clicked, this,
-            &VisionPage::ringCalibrationRequested);
+            [this] {
+                if (modeCombo_->currentData().toInt() == 1)
+                    emit materialCalibrationRequested(targetCombo_->currentData().toInt());
+                else emit ringCalibrationRequested();
+            });
     connect(statusButton_, &QPushButton::clicked, this,
             &VisionPage::statusRequested);
     rebuildTargets();
@@ -162,6 +183,7 @@ void VisionPage::setConnected(bool connected) {
     connected_ = connected;
     if (!connected) {
         scalesApplied_.fill(false);
+        materialApplied_ = false;
         running_ = false;
         manualEnabled_ = false;
         calibrationRunning_ = false;
@@ -211,6 +233,9 @@ void VisionPage::showVisionError(const QString &error) {
     if (scaleLabel_->text() == QStringLiteral("等待主控确认")) {
         scaleLabel_->setText(QStringLiteral("应用失败；请检查错误"));
     }
+    if (calibrationLabel_->text() == QStringLiteral("手动比例等待主控确认")) {
+        calibrationLabel_->setText(QStringLiteral("手动比例应用失败：%1").arg(error));
+    }
     refreshControls();
 }
 
@@ -226,9 +251,23 @@ void VisionPage::setRingScaleApplied(int ring, int forwardMilli, int rightMilli)
                                      .arg(ring)
                                      .arg(forwardMilli / 1000.0, 0, 'f', 3)
                                      .arg(rightMilli / 1000.0, 0, 'f', 3));
+            if (ring == 2 && calibrationLabel_->text() == QStringLiteral("手动比例等待主控确认")) {
+                calibrationLabel_->setText(QStringLiteral("当前比例已手动应用，可开始对准或重新自动标定。"));
+            }
         } else {
             scaleLabel_->setText(QStringLiteral("主控已确认旧值；当前输入待应用"));
         }
+    }
+    refreshControls();
+}
+
+void VisionPage::setMaterialScaleApplied(int forwardMilli, int rightMilli) {
+    materialApplied_ = materialForward_ == forwardMilli && materialRight_ == rightMilli;
+    if (modeCombo_->currentData().toInt() == 1) {
+        scaleLabel_->setText(materialApplied_ ? QStringLiteral("物料比例已应用；断电后恢复固件默认比例")
+                                             : QStringLiteral("主控已确认旧值；当前输入待应用"));
+        if (materialApplied_ && calibrationLabel_->text() == QStringLiteral("手动比例等待主控确认"))
+            calibrationLabel_->setText(QStringLiteral("当前比例已手动应用，可重新自动标定。"));
     }
     refreshControls();
 }
@@ -244,13 +283,22 @@ void VisionPage::setCalibrationStatus(const QString &status) {
 }
 
 void VisionPage::setCalibrationScales(int forwardMilli, int rightMilli) {
-    forwardScales_[1] = forwardMilli;
-    rightScales_[1] = rightMilli;
-    scalesApplied_[1] = false;
+    if (modeCombo_->currentData().toInt() == 1) {
+        materialForward_ = forwardMilli;
+        materialRight_ = rightMilli;
+        materialApplied_ = false;
+    } else {
+        forwardScales_[1] = forwardMilli;
+        rightScales_[1] = rightMilli;
+        scalesApplied_[1] = false;
+    }
     refreshScaleInputs();
 }
 
 void VisionPage::rebuildTargets() {
+    calibrationLabel_->setText(modeCombo_->currentData().toInt() == 1
+        ? QStringLiteral("前后、左右各往返 20 mm（15 RPM）。请使用实际取料观察姿态，保持选定颜色的单个物料静止可见，并确认移动净空。")
+        : QStringLiteral("前后、左右各往返 20 mm（15 RPM）。请使用实际圆环识别姿态，保持圆环 2 可见，并确认移动净空。"));
     targetCombo_->clear();
     startButton_->setText(modeCombo_->currentData().toInt() == 1
                               ? QStringLiteral("识别指定颜色并夹取")
@@ -273,14 +321,22 @@ void VisionPage::rebuildTargets() {
 
 void VisionPage::refreshScaleInputs() {
     const int ring = targetCombo_->currentData().toInt();
-    if (modeCombo_->currentData().toInt() == 2 && ring >= 1 && ring <= 3) {
+    if (modeCombo_->currentData().toInt() == 1) {
+        const QSignalBlocker forwardBlocker(forwardScaleSpin_);
+        const QSignalBlocker rightBlocker(rightScaleSpin_);
+        forwardScaleSpin_->setValue(materialForward_ / 1000.0);
+        rightScaleSpin_->setValue(materialRight_ / 1000.0);
+        scaleLabel_->setText(materialApplied_ ? QStringLiteral("物料比例已应用；断电后恢复固件默认比例")
+                                             : QStringLiteral("物料比例待应用"));
+    } else if (ring >= 1 && ring <= 3) {
         const QSignalBlocker forwardBlocker(forwardScaleSpin_);
         const QSignalBlocker rightBlocker(rightScaleSpin_);
         forwardScaleSpin_->setValue(forwardScales_[ring - 1] / 1000.0);
         rightScaleSpin_->setValue(rightScales_[ring - 1] / 1000.0);
         scaleLabel_->setText(scalesApplied_[ring - 1]
-                                 ? QStringLiteral("圆环 %1 已应用；断电后需重新应用").arg(ring)
-                                 : QStringLiteral("圆环 %1 待应用；初值来自圆环 2 粗测").arg(ring));
+                                 ? QStringLiteral("圆环 %1 已应用；断电后恢复固件默认比例").arg(ring)
+                                 : ring == 2 ? QStringLiteral("圆环 2 待应用；初值为实测默认比例")
+                                             : QStringLiteral("圆环 %1 待应用；初值来自圆环 2 粗测").arg(ring));
     }
     refreshControls();
 }
@@ -288,17 +344,22 @@ void VisionPage::refreshScaleInputs() {
 void VisionPage::refreshControls() {
     const bool busy = running_ || calibrationRunning_;
     const bool canScale = connected_ && !busy && !manualEnabled_ &&
-                          !otherMotionRunning_ &&
-                          modeCombo_->currentData().toInt() == 2;
+                          !otherMotionRunning_;
     forwardScaleSpin_->setEnabled(canScale);
     rightScaleSpin_->setEnabled(canScale);
     applyScaleButton_->setEnabled(canScale);
-    scaleLabel_->setVisible(modeCombo_->currentData().toInt() == 2);
-    forwardScaleSpin_->setVisible(modeCombo_->currentData().toInt() == 2);
-    rightScaleSpin_->setVisible(modeCombo_->currentData().toInt() == 2);
-    applyScaleButton_->setVisible(modeCombo_->currentData().toInt() == 2);
+    scaleLabel_->setVisible(true);
+    forwardScaleSpin_->setVisible(true);
+    rightScaleSpin_->setVisible(true);
+    applyScaleButton_->setVisible(true);
     const int ring = targetCombo_->currentData().toInt();
-    const bool canCalibrate = modeCombo_->currentData().toInt() == 2 && ring == 2;
+    const bool material = modeCombo_->currentData().toInt() == 1;
+    applyScaleButton_->setText(material ? QStringLiteral("应用当前物料比例") : QStringLiteral("应用当前圆环比例"));
+    calibrateButton_->setText(material ? QStringLiteral("自动标定物料比例") : QStringLiteral("自动标定圆环 2 比例"));
+    calibrateButton_->setToolTip(material
+        ? QStringLiteral("请在实际取料观察姿态下，保持选定颜色的单个物料静止可见。前后、左右各往返20 mm，15 RPM；请确认移动净空。")
+        : QStringLiteral("请使用实际圆环识别姿态，并确认移动净空。"));
+    const bool canCalibrate = material || ring == 2;
     calibrateButton_->setVisible(canCalibrate);
     calibrationLabel_->setVisible(canCalibrate);
     calibrateButton_->setEnabled(connected_ && canCalibrate && !busy && !otherMotionRunning_);

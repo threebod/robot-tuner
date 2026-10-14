@@ -8,6 +8,7 @@
 
 #include "device/MechanismActionModel.h"
 #include "device/AvoidanceTypes.h"
+#include "../../../test/mecanum_jog/vision_defaults.h"
 
 class MecanumJogClient : public QObject {
     Q_OBJECT
@@ -31,7 +32,8 @@ public:
     bool avoidanceRunning() const { return avoidanceRunning_; }
     bool startRawPickRoute(int startZone, quint16 rpm = 200);
     bool startMissionRoute(int startZone, const QString &taskCode, quint16 rpm = 200,
-                           int forwardMilli = 640, int rightMilli = 673,
+                           int forwardMilli = VISION_RING2_FORWARD_MILLI,
+                           int rightMilli = VISION_RING2_RIGHT_MILLI,
                            bool waitForButton = false);
     bool continueRawPickRoute();
     bool fullRouteRunning() const;
@@ -88,6 +90,7 @@ signals:
     void mechanismCompleted(MechanismPoseData pose);
     void mechanismError(QString reason);
     void visionStateChanged(QString state);
+    void visionMaterialScaleApplied(int forwardMilli, int rightMilli);
     void visionRingScaleApplied(int ring, int forwardMilli, int rightMilli);
     void visionSampleReceived(int du, int dv, double forwardMm,
                               double rightMm, int quality, int iteration);
@@ -122,6 +125,8 @@ private:
     QString missionTaskCode_;
     int missionStartZone_{};
     quint16 missionRpm_{};
+    int materialForwardMilli_{VISION_MATERIAL_FORWARD_MILLI};
+    int materialRightMilli_{VISION_MATERIAL_RIGHT_MILLI};
     int missionForwardMilli_{};
     int missionRightMilli_{};
     bool missionSetupDispatch_{};

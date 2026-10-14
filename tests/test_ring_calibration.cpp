@@ -28,6 +28,7 @@ struct Fixture {
     QStringList commands;
     QString error;
     int completed{}, forward{}, right{};
+    int color{};
     Fixture() {
         QObject::connect(&client, &MecanumJogClient::bytesReady, [&](QByteArray bytes) {
             if (bytes != "hb\r\n") commands.append(QString::fromUtf8(bytes).trimmed());
@@ -43,14 +44,15 @@ struct Fixture {
     bool waitForSample() {
         QElapsedTimer timer;
         timer.start();
-        while (runner.running() && !last().startsWith("vision sample ring 2 ") && timer.elapsed() < 600)
+        while (runner.running() && !last().startsWith((color ? "vision sample material " : "vision sample ring 2 ")) && timer.elapsed() < 600)
             events(2);
-        return last().startsWith("vision sample ring 2 ");
+        return last().startsWith((color ? "vision sample material " : "vision sample ring 2 "));
     }
     void sample(QPointF point, int idOffset = 0, int quality = 90) {
         const int id = last().section(' ', -1).toInt() + idOffset;
-        receive(QStringLiteral("VISION MEASURE id=%1 ring=2 token=%2 du=%3 dv=%4 quality=%5")
-                    .arg(id).arg(id).arg(qRound(point.x())).arg(qRound(point.y())).arg(quality));
+        receive(QStringLiteral("VISION MEASURE id=%1 %6 token=%2 du=%3 dv=%4 quality=%5")
+                    .arg(id).arg(id).arg(qRound(point.x())).arg(qRound(point.y())).arg(quality)
+                    .arg(color ? QStringLiteral("material=%1").arg(color) : QStringLiteral("ring=2")));
         receive("VISION STATE state=IDLE mode=RING selector=0 target=2 iteration=0");
     }
     bool move(int index) {
@@ -103,12 +105,53 @@ int main(int argc, char **argv) {
                      f.client.beginRouteExecution(), "confirmed calibration did not release its reservation")) return 1;
         f.client.endRouteExecution();
     }
-    // Independent failures: insufficient movement, reversed direction, return drift and cross-axis coupling.
-    const std::array<std::array<QPointF, 5>, 4> invalid{{
+    {
+        Fixture f;
+        f.color = 4;
+        if (!require(f.runner.startMaterial(4), "material calibration failed to start")) return 1;
+        const QString initial = f.last();
+        f.receive("VISION MEASURE id=1 material=2 token=1 du=0 dv=0 quality=0");
+        events();
+        if (!require(f.last() == initial, "wrong color sample triggered movement")) return 1;
+        const std::array<QPointF, 5> points{{{0,0},{40,1},{0,0},{1,20},{0,0}}};
+        for (int i = 0; i < 5; ++i) {
+            if (!require(f.last().startsWith("vision sample material 4 "), "probe changed material color")) return 1;
+            f.sample(points[i], 0, 0);
+            if (i < 4 && !f.move(i)) return 1;
+        }
+        events();
+        f.receive("ARMED for one enable or motion command");
+        if (!require(f.last() == "vision scale material 500 1000", "material scale not applied independently")) return 1;
+        f.receive("VISION SCALE ring=2 forward_milli=500 right_milli=1000");
+        f.receive("VISION SCALE material forward_milli=640 right_milli=673");
+        if (!require(f.runner.running(), "wrong scale reply completed material calibration")) return 1;
+        f.receive("VISION SCALE material forward_milli=500 right_milli=1000");
+        if (!require(f.completed == 1 && !f.runner.running(), "material acknowledgement did not complete")) return 1;
+    }
+    // Replay the second hardware run: one-pixel return error must not inflate the coupling estimate.
+    {
+        const std::array<QPointF, 5> points{{{-35,22},{-11,21},{-35,22},{-31,45},{-36,23}}};
+        Fixture f;
+        if (!f.runner.start()) return 1;
+        for (int i = 0; i < 5; ++i) {
+            f.sample(points[i]);
+            if (i < 4 && !f.move(i)) return 1;
+        }
+        events();
+        if (!require(f.runner.running() && f.forward == 833 && f.right == 889 && f.last() == "arm",
+                     "hardware samples were rejected due to single-pixel return error")) return 1;
+        f.receive("ARMED for one enable or motion command");
+        if (!require(f.last() == "vision scale ring 2 833 889", "hardware scales were not applied")) return 1;
+        f.receive("VISION SCALE ring=2 forward_milli=833 right_milli=889");
+        if (!require(f.completed == 1 && !f.runner.running(), "hardware calibration confirmation failed")) return 1;
+    }
+    // Independent failures, including the first hardware run's seven-pixel return drift.
+    const std::array<std::array<QPointF, 5>, 5> invalid{{
         {{{0,0},{2,0},{0,0},{0,20},{0,0}}},
         {{{0,0},{-40,0},{0,0},{0,20},{0,0}}},
         {{{0,0},{40,0},{5,0},{5,20},{5,0}}},
-        {{{0,0},{40,12},{0,0},{0,20},{0,0}}}
+        {{{0,0},{40,12},{0,0},{0,20},{0,0}}},
+        {{{-28,21},{-4,20},{-28,21},{-29,44},{-35,22}}}
     }};
     for (const auto &points : invalid) {
         Fixture f;

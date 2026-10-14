@@ -117,6 +117,11 @@ int main(int argc, char **argv) {
         !turnDirection || !turnAngle || !turnSend) {
         return 1;
     }
+    if (!require(routeForwardScale->value() == 102.89 &&
+                     routeScale->value() == 90.0,
+                 "route calibration defaults are incorrect")) {
+        return 1;
+    }
     if (!require(routeRpm->value() == 200 && routeRpm->maximum() == 250 &&
                      routeTurnRpm->value() == 230 && routeTurnRpm->maximum() == 250 &&
                      routeLateralRpm->value() == 150 &&
@@ -144,8 +149,15 @@ int main(int argc, char **argv) {
     }
     if (!require(lineDistance->minimum() == 100 && lineDistance->maximum() == 500 &&
                      lineDistance->singleStep() == 100 &&
-                     lineRpm->minimum() == 10 && lineRpm->maximum() == 120,
+                     lineRpm->minimum() == 10 && lineRpm->maximum() == 250,
                  "line parameter bounds are incorrect")) {
+        return 1;
+    }
+    lineDistance->setValue(500);
+    lineRpm->setValue(250);
+    lineSend->click();
+    if (!require(armed.back() == QStringLiteral("line W 500 250"),
+                 "250 RPM line command mapping is incorrect")) {
         return 1;
     }
     if (!require(auxDistance->minimum() == -135.0 &&

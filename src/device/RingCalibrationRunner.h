@@ -12,6 +12,8 @@ class RingCalibrationRunner : public QObject {
 public:
     explicit RingCalibrationRunner(MecanumJogClient *client, QObject *parent = nullptr);
     bool start();
+    bool startMaterial(int color);
+    bool material() const { return materialColor_ != 0; }
     void stop();
     bool running() const { return running_; }
 
@@ -24,6 +26,7 @@ signals:
 
 private:
     enum class Stage { Idle, Sample, Ready, Move, Settle, Apply };
+    bool startCalibration(int color);
     void requestSample();
     void move();
     void handleLine(const QString &line);
@@ -37,6 +40,7 @@ private:
     QTimer timeout_, settle_;
     std::array<QPointF, 5> samples_{};
     int sampleIndex_{};
+    int materialColor_{};
     quint16 sampleId_{};
     quint64 generation_{};
     int forwardMilli_{}, rightMilli_{};

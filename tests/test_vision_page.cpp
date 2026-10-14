@@ -2,6 +2,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFontDatabase>
+#include <QLabel>
 #include <QPushButton>
 #include <QPixmap>
 #include <QSpinBox>
@@ -37,9 +38,10 @@ int main(int argc, char **argv) {
     auto *rightScale = page.findChild<QDoubleSpinBox *>("visionRightScaleSpinBox");
     auto *applyScale = page.findChild<QPushButton *>("visionApplyScaleButton");
     auto *calibrate = page.findChild<QPushButton *>("visionCalibrateButton");
+    auto *calibrationStatus = page.findChild<QLabel *>("visionCalibrationLabel");
     if (!require(mode && target && start && pause && forward && step && rpm,
                  "vision controls are missing")) return 1;
-    if (!require(forwardScale && rightScale && applyScale && calibrate,
+    if (!require(forwardScale && rightScale && applyScale && calibrate && calibrationStatus,
                  "ring scale controls are missing")) return 1;
     page.setConnected(true);
     int material = 0;
@@ -66,6 +68,25 @@ int main(int argc, char **argv) {
                      });
     start->click();
     if (!require(material == 1, "material pickup signal is incorrect")) return 1;
+    int calibrationColor = 0;
+    QObject::connect(&page, &VisionPage::materialCalibrationRequested, [&](int color) { calibrationColor = color; });
+    target->setCurrentIndex(3);
+    calibrate->click();
+    if (!require(calibrationColor == 4 && !calibrate->isHidden(), "material calibration did not use selected color")) return 1;
+    page.setCalibrationRunning(true);
+    page.setCalibrationScales(800, 900);
+    if (!require(!mode->isEnabled() && !target->isEnabled() && pause->isEnabled(), "material calibration controls not locked")) return 1;
+    page.setCalibrationRunning(false);
+    page.setMaterialScaleApplied(800, 900);
+    if (!require(forwardScale->value() == 0.8 && rightScale->value() == 0.9, "material calculated scale not displayed")) return 1;
+    if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--screenshot") {
+        page.resize(760, 680);
+        page.show();
+        app.processEvents();
+        QString materialPath = QString::fromLocal8Bit(argv[2]);
+        materialPath.replace(QStringLiteral(".png"), QStringLiteral("_material.png"));
+        if (!require(page.grab().save(materialPath), "material preview was not saved")) return 1;
+    }
     mode->setCurrentIndex(1);
     target->setCurrentIndex(2);
     if (!require(!start->isEnabled(),
@@ -85,6 +106,8 @@ int main(int argc, char **argv) {
     if (!require(start->isEnabled(),
                  "confirmed ring scale did not enable alignment")) return 1;
     target->setCurrentIndex(1);
+    if (!require(forwardScale->value() == 1.111 && rightScale->value() == 1.143,
+                 "ring 2 did not use the measured formal default scales")) return 1;
     if (!require(!start->isEnabled(),
                  "another ring inherited scale confirmation")) return 1;
     int calibrationRequests = 0;
@@ -100,14 +123,33 @@ int main(int argc, char **argv) {
     page.setCalibrationRunning(false);
     if (!require(page.ring2ForwardMilli() == 500 && page.ring2RightMilli() == 1000 && !start->isEnabled(),
                  "calculated scales were used before firmware acknowledgement")) return 1;
+    page.setCalibrationStatus(QStringLiteral("自动标定完成"));
     page.setRingScaleApplied(2, 500, 1000);
     if (!require(start->isEnabled(), "automatic scales did not enable alignment after confirmation")) return 1;
+    if (!require(calibrationStatus->text() == QStringLiteral("自动标定完成"),
+                 "scale confirmation overwrote automatic calibration result")) return 1;
     if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--screenshot") {
         page.resize(760, 680);
         page.show();
         app.processEvents();
         if (!require(page.grab().save(QString::fromLocal8Bit(argv[2])), "vision preview was not saved")) return 1;
     }
+    page.setCalibrationStatus(QStringLiteral("往返偏差或两轴耦合过大；未应用比例"));
+    forwardScale->setValue(0.833);
+    rightScale->setValue(0.889);
+    applyScale->click();
+    if (!require(calibrationStatus->text() == QStringLiteral("手动比例等待主控确认") && !start->isEnabled(),
+                 "manual application retained a stale calibration error or claimed success early")) return 1;
+    page.setRingScaleApplied(2, 640, 673);
+    if (!require(calibrationStatus->text() == QStringLiteral("手动比例等待主控确认") && !start->isEnabled(),
+                 "old scale reply completed manual application")) return 1;
+    page.setRingScaleApplied(2, 833, 889);
+    if (!require(start->isEnabled() && calibrationStatus->text().contains(QStringLiteral("已手动应用")),
+                 "confirmed manual scales did not replace the stale calibration error")) return 1;
+    applyScale->click();
+    page.showVisionError(QStringLiteral("SCALE_REQUIRES_ARMED_IDLE"));
+    if (!require(calibrationStatus->text().startsWith(QStringLiteral("手动比例应用失败")),
+                 "manual application failure remained pending")) return 1;
     forwardScale->setValue(0.720);
     rightScale->setValue(0.810);
     if (!require(page.ring2ForwardMilli() == 720 && page.ring2RightMilli() == 810,

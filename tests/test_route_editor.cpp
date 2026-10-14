@@ -157,6 +157,15 @@ int main(int argc, char **argv) {
     feed("MECH SERVOS gripper_mdeg=90000 platform_mdeg=26000 turret_mdeg=65000 moving=0"); pump(20); CHECK(!runner.running());
 
     RouteEditorPage page(&runner); page.resize(1100, 850); page.show();
+    auto *visionMode = page.findChild<QComboBox *>("routeVisionMode");
+    auto *visionTarget = page.findChild<QSpinBox *>("routeVisionTarget");
+    auto *forwardScale = page.findChild<QSpinBox *>("routeForwardScale");
+    auto *rightScale = page.findChild<QSpinBox *>("routeRightScale");
+    CHECK(visionMode && visionTarget && forwardScale && rightScale);
+    visionMode->setCurrentIndex(1); visionTarget->setValue(2);
+    CHECK(forwardScale->value() == 1111 && rightScale->value() == 1143);
+    visionMode->setCurrentIndex(0);
+    CHECK(forwardScale->value() == 640 && rightScale->value() == 673);
     CHECK(page.loadFile(path, &error)); CHECK(page.sequence().steps.size() == 6);
     CHECK(page.findChild<QPushButton *>("routeAdd")->isEnabled());
     CHECK(!page.findChild<QPushButton *>("routeRunAll")->isEnabled());

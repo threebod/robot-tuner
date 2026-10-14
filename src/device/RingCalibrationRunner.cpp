@@ -22,13 +22,21 @@ RingCalibrationRunner::RingCalibrationRunner(MecanumJogClient *client, QObject *
             [this] { finish(false, QStringLiteral("标定已停止")); });
 }
 
-bool RingCalibrationRunner::start() {
+bool RingCalibrationRunner::start() { return startCalibration(0); }
+
+bool RingCalibrationRunner::startMaterial(int color) {
+    if (color < 1 || color > 6) return false;
+    return startCalibration(color);
+}
+
+bool RingCalibrationRunner::startCalibration(int color) {
     if (running_) return false;
     if (client_->avoidanceRunning() || !client_->beginRouteExecution()) {
         emit failed(QStringLiteral("请连接文本串口，并等待其他运动与视觉流程结束"));
         return false;
     }
     running_ = true;
+    materialColor_ = color;
     ++generation_;
     sampleIndex_ = 0;
     samples_.fill(QPointF());
@@ -50,8 +58,11 @@ void RingCalibrationRunner::requestSample() {
     if (!running_) return;
     stage_ = Stage::Sample;
     if (++sampleId_ == 0) ++sampleId_;
-    emit progressChanged(QStringLiteral("标定：读取圆环 2 稳定中心（%1/5）").arg(sampleIndex_ + 1));
-    send(QStringLiteral("vision sample ring 2 %1").arg(sampleId_), false, 6000);
+    emit progressChanged(QStringLiteral("标定：读取%1稳定中心（%2/5）")
+                             .arg(material() ? QStringLiteral("物料颜色 %1 ").arg(materialColor_)
+                                             : QStringLiteral("圆环 2 ")).arg(sampleIndex_ + 1));
+    send(material() ? QStringLiteral("vision sample material %1 %2").arg(materialColor_).arg(sampleId_)
+                    : QStringLiteral("vision sample ring 2 %1").arg(sampleId_), false, 6000);
 }
 
 void RingCalibrationRunner::move() {
@@ -72,7 +83,8 @@ void RingCalibrationRunner::defer(bool apply) {
     QTimer::singleShot(0, this, [this, generation, apply] {
         if (!running_ || generation_ != generation) return;
         if (apply) {
-            send(QStringLiteral("vision scale ring 2 %1 %2").arg(forwardMilli_).arg(rightMilli_),
+            send(QStringLiteral("vision scale %1 %2 %3").arg(material() ? "material" : "ring 2")
+                     .arg(forwardMilli_).arg(rightMilli_),
                  true, 5000);
         } else move();
     });
@@ -87,13 +99,14 @@ void RingCalibrationRunner::handleLine(const QString &line) {
         return;
     }
     if (stage_ == Stage::Sample) {
-        static const QRegularExpression measure(QStringLiteral(
-            "^VISION MEASURE id=(\\d+) ring=2 token=(\\d+) du=(-?\\d+) dv=(-?\\d+) quality=(\\d+)$"));
+        const QRegularExpression measure(QStringLiteral(
+            "^VISION MEASURE id=(\\d+) %1 token=(\\d+) du=(-?\\d+) dv=(-?\\d+) quality=(\\d+)$")
+                .arg(material() ? QStringLiteral("material=%1").arg(materialColor_) : QStringLiteral("ring=2")));
         const auto match = measure.match(line);
         if (!match.hasMatch() || match.captured(1).toUInt() != sampleId_) return;
         const int du = match.captured(3).toInt(), dv = match.captured(4).toInt();
-        if (match.captured(5).toInt() < 60 || du < -160 || du > 159 || dv < -120 || dv > 119) {
-            abort(QStringLiteral("圆环样本质量或坐标异常，未应用比例"));
+        if ((!material() && match.captured(5).toInt() < 60) || du < -160 || du > 159 || dv < -120 || dv > 119) {
+            abort(QStringLiteral("视觉样本质量或坐标异常，未应用比例"));
             return;
         }
         timeout_.stop();
@@ -116,8 +129,8 @@ void RingCalibrationRunner::handleLine(const QString &line) {
             settle_.start(300);
         }
     } else if (stage_ == Stage::Apply &&
-               line == QStringLiteral("VISION SCALE ring=2 forward_milli=%1 right_milli=%2")
-                           .arg(forwardMilli_).arg(rightMilli_)) {
+               line == QStringLiteral("VISION SCALE %1 forward_milli=%2 right_milli=%3")
+                           .arg(material() ? "material" : "ring=2").arg(forwardMilli_).arg(rightMilli_)) {
         finish(true);
     }
 }
@@ -137,12 +150,14 @@ bool RingCalibrationRunner::calculateScales() {
         return false;
     }
     if (qAbs(forwardDrift.x()) > 3 || qAbs(forwardDrift.y()) > 3 ||
-        qAbs(rightDrift.x()) > 3 || qAbs(rightDrift.y()) > 3 ||
-        qAbs(forwardOut.y()) > qMax(3.0, forwardPixels * 0.2) ||
-        qAbs(forwardBack.y()) > qMax(3.0, forwardPixels * 0.2) ||
-        qAbs(rightOut.x()) > qMax(3.0, rightPixels * 0.2) ||
-        qAbs(rightBack.x()) > qMax(3.0, rightPixels * 0.2)) {
-        abort(QStringLiteral("往返偏差或两轴耦合过大，请检查打滑和摄像头姿态；未应用比例"));
+        qAbs(rightDrift.x()) > 3 || qAbs(rightDrift.y()) > 3) {
+        abort(QStringLiteral("往返回位偏差超过 3 像素：前后 (%1, %2)，左右 (%3, %4)；未应用比例")
+                  .arg(forwardDrift.x()).arg(forwardDrift.y()).arg(rightDrift.x()).arg(rightDrift.y()));
+        return false;
+    }
+    if (qAbs((forwardOut.y() + forwardBack.y()) / 2.0) > qMax(3.0, forwardPixels * 0.2) ||
+        qAbs((rightOut.x() + rightBack.x()) / 2.0) > qMax(3.0, rightPixels * 0.2)) {
+        abort(QStringLiteral("往返平均两轴耦合超过门槛，请检查摄像头姿态；未应用比例"));
         return false;
     }
     forwardMilli_ = qRound(20000.0 / forwardPixels);

@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <array>
+#include "../../../test/mecanum_jog/vision_defaults.h"
 
 class QComboBox;
 class QDoubleSpinBox;
@@ -23,6 +24,7 @@ public:
                          int quality, int iteration);
     void showVisionError(const QString &error);
     void setRingScaleApplied(int ring, int forwardMilli, int rightMilli);
+    void setMaterialScaleApplied(int forwardMilli, int rightMilli);
     void setCalibrationRunning(bool running);
     void setCalibrationStatus(const QString &status);
     void setCalibrationScales(int forwardMilli, int rightMilli);
@@ -37,6 +39,8 @@ signals:
     void statusRequested();
     void jogRequested(int forwardMm, int rightMm, int rpm);
     void ringCalibrationRequested();
+    void materialCalibrationRequested(int color);
+    void materialScaleRequested(int forwardMilli, int rightMilli);
 
 private:
     void rebuildTargets();
@@ -54,8 +58,8 @@ private:
     QLabel *scaleLabel_{};
     QPushButton *calibrateButton_{};
     QLabel *calibrationLabel_{};
-    std::array<int, 3> forwardScales_{{640, 640, 640}};
-    std::array<int, 3> rightScales_{{673, 673, 673}};
+    std::array<int, 3> forwardScales_{{640, VISION_RING2_FORWARD_MILLI, 640}};
+    std::array<int, 3> rightScales_{{673, VISION_RING2_RIGHT_MILLI, 673}};
     std::array<bool, 3> scalesApplied_{{false, false, false}};
     QPushButton *startButton_{};
     QPushButton *pauseButton_{};
@@ -68,4 +72,7 @@ private:
     bool running_{};
     bool manualEnabled_{};
     bool calibrationRunning_{};
+    int materialForward_{VISION_MATERIAL_FORWARD_MILLI};
+    int materialRight_{VISION_MATERIAL_RIGHT_MILLI};
+    bool materialApplied_{};
 };

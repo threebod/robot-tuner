@@ -1,5 +1,6 @@
 #include "pages/RouteEditorPage.h"
 #include "device/RouteSequenceRunner.h"
+#include "../../../test/mecanum_jog/vision_defaults.h"
 
 #include <QComboBox>
 #include <QFileDialog>
@@ -108,7 +109,18 @@ RouteEditorPage::RouteEditorPage(RouteSequenceRunner *runner, QWidget *parent)
     status_->setObjectName("routeStatus"); status_->setWordWrap(true); layout->addWidget(status_);
 
     connect(type_, qOverload<int>(&QComboBox::currentIndexChanged), parameters_, &QStackedWidget::setCurrentIndex);
-    connect(visionMode_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int mode) { target_->setMaximum(mode ? 3 : 6); });
+    auto resetVisionScale = [this] {
+        const bool ring2 = visionMode_->currentIndex() == 1 && target_->value() == 2;
+        forward_->setValue(ring2 ? VISION_RING2_FORWARD_MILLI : VISION_MATERIAL_FORWARD_MILLI);
+        right_->setValue(ring2 ? VISION_RING2_RIGHT_MILLI : VISION_MATERIAL_RIGHT_MILLI);
+    };
+    connect(visionMode_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, resetVisionScale](int mode) {
+        target_->setMaximum(mode ? 3 : 6);
+        resetVisionScale();
+    });
+    connect(target_, qOverload<int>(&QSpinBox::valueChanged), this, [this, resetVisionScale](int) {
+        if (visionMode_->currentIndex() == 1) resetVisionScale();
+    });
     connect(table_, &QTableWidget::currentCellChanged, this, [this] { loadSelected(); updateControls(); });
     connect(add, &QPushButton::clicked, this, [this] {
         auto candidate = sequence(); candidate.steps.append(editedStep()); QString error;

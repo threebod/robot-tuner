@@ -99,7 +99,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
                               100, 500, 100, chassis);
     lineDistance->setSingleStep(100);
     lineDistance->setSuffix(QStringLiteral(" mm"));
-    auto *lineRpm = spin(QStringLiteral("mecanumLineRpmSpin"), 10, 120, 30,
+    auto *lineRpm = spin(QStringLiteral("mecanumLineRpmSpin"), 10, 250, 30,
                          chassis);
     lineRpm->setSingleStep(10);
     lineRpm->setSuffix(QStringLiteral(" RPM"));
@@ -376,7 +376,7 @@ MecanumJogPage::MecanumJogPage(QWidget *parent) : QWidget(parent) {
     routeForwardScale->setRange(50.0, 150.0);
     routeForwardScale->setDecimals(2);
     routeForwardScale->setSingleStep(0.1);
-    routeForwardScale->setValue(100.0);
+    routeForwardScale->setValue(102.89);
     routeForwardScale->setSuffix(QStringLiteral(" %"));
     auto *routeLateralScale = new QDoubleSpinBox(route);
     routeLateralScale->setObjectName(

@@ -54,7 +54,11 @@ void MecanumJogClient::setConnected(bool connected) {
         avoidancePathVersion_ = -1;
         avoidancePathStaging_.clear();
     }
-    if (!connected) otherMotionRunning_ = false;
+    if (!connected) {
+        otherMotionRunning_ = false;
+        materialForwardMilli_ = VISION_MATERIAL_FORWARD_MILLI;
+        materialRightMilli_ = VISION_MATERIAL_RIGHT_MILLI;
+    }
     emit connectionChanged(connected);
     receiveBuffer_.clear();
     if (connected_) {
@@ -648,13 +652,13 @@ void MecanumJogClient::handleLine(const QString &line) {
              line.startsWith(QStringLiteral("OK servo=3 angle=26")))) {
             missionSetupStage_ = 4;
             dispatchMissionSetup(QStringLiteral("vision scale material %1 %2")
-                                     .arg(missionForwardMilli_)
-                                     .arg(missionRightMilli_), true);
+                                     .arg(materialForwardMilli_)
+                                     .arg(materialRightMilli_), true);
             return;
         }
         if (missionSetupStage_ == 4 &&
             line == QStringLiteral("VISION SCALE material forward_milli=%1 right_milli=%2")
-                        .arg(missionForwardMilli_).arg(missionRightMilli_)) {
+                        .arg(materialForwardMilli_).arg(materialRightMilli_)) {
             missionSetupStage_ = 5;
             dispatchMissionSetup(QStringLiteral("vision scale ring 2 %1 %2")
                                      .arg(missionForwardMilli_)
@@ -793,6 +797,18 @@ void MecanumJogClient::handleLine(const QString &line) {
     if (line.startsWith(QStringLiteral("ROUTE INVALID"))) {
         emit fullRouteError(line);
         setFullRouteRunning(false);
+        return;
+    }
+    static const QRegularExpression materialScaleExpression(QStringLiteral(
+        "^VISION SCALE material forward_milli=(\\d+) right_milli=(\\d+)$"));
+    match = materialScaleExpression.match(line);
+    if (match.hasMatch() && match.captured(1).toInt() >= 50 && match.captured(1).toInt() <= 2000 &&
+        match.captured(2).toInt() >= 50 && match.captured(2).toInt() <= 2000) {
+        if (missionSetupStage_ == 0) {
+            materialForwardMilli_ = match.captured(1).toInt();
+            materialRightMilli_ = match.captured(2).toInt();
+        }
+        emit visionMaterialScaleApplied(match.captured(1).toInt(), match.captured(2).toInt());
         return;
     }
     static const QRegularExpression visionScaleExpression(QStringLiteral(

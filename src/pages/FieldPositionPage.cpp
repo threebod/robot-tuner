@@ -601,7 +601,7 @@ FieldPositionPage::FieldPositionPage(QWidget *parent) : QWidget(parent) {
                 this, QStringLiteral("确认两轮取放"),
                 QStringLiteral("上电时水平轴、升降轴已在零位，机构零位将自动初始化。\n"
                                "电机方向、限位、急停及各工位动作已分段实测。\n"
-                               "准备时将自动指令夹爪90°（270°/s）、平台26°，并应用视觉页圆环2比例到物料和圆环2。\n"
+                               "准备时将自动指令夹爪90°（270°/s）、平台26°，并分别应用已确认的物料比例及视觉页圆环2比例；物料未校准时使用默认比例。\n"
                                "%1\n"
                                "启动后二维码点至少停留1秒，等待合法四组扫码任务码后执行两轮取放；第二批暂存放第二层。")
                     .arg(waitForButton ?

@@ -379,9 +379,12 @@ int main(int argc, char **argv) {
     if (!require(transmitted.back() == QByteArray("arm\r\n"),
                  "mission did not arm material calibration")) return 1;
     client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
-    if (!require(transmitted.back() == QByteArray("vision scale material 720 810\r\n"),
+    if (!require(transmitted.back() == QByteArray("vision scale material 640 673\r\n"),
                  "mission material calibration is incorrect")) return 1;
     client.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=720 right_milli=810\r\n"));
+    if (!require(transmitted.back() == QByteArray("vision scale material 640 673\r\n"),
+                 "ring-scale acknowledgement was accepted as material calibration")) return 1;
+    client.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=640 right_milli=673\r\n"));
     if (!require(transmitted.back() == QByteArray("arm\r\n"),
                  "mission did not arm ring calibration")) return 1;
     client.ingestBytes(QByteArrayView("ARMED for one enable or motion command\r\n"));
@@ -622,5 +625,33 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    {
+        MecanumJogClient calibrated;
+        QList<QByteArray> commands;
+        QObject::connect(&calibrated, &MecanumJogClient::bytesReady,
+                         [&](QByteArray bytes) { commands.append(bytes); });
+        calibrated.setConnected(true);
+        calibrated.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=500 right_milli=1000\r\n"));
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            calibrated.ingestBytes(QByteArrayView("MECH INIT h=0 l=0 t=650\r\n"));
+            if (!require(calibrated.startMissionRoute(1, QStringLiteral("156+123+516+231"), 40),
+                         "mission rejected calibrated material scales")) return 1;
+            calibrated.ingestBytes(QByteArrayView(
+                "TASK SET code=156+123+516+231\r\nDONE servo=2 angle=90\r\n"
+                "DONE servo=3 angle=26\r\nARMED for one enable or motion command\r\n"));
+            const QByteArray expected = attempt == 0 ? "vision scale material 500 1000\r\n"
+                                                     : "vision scale material 640 673\r\n";
+            if (!require(commands.back() == expected,
+                         "mission overwrote calibration or reused it after disconnect")) return 1;
+            if (attempt == 0) {
+                calibrated.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=640 right_milli=673\r\n"));
+                if (!require(commands.back() == expected, "stale material scale advanced mission")) return 1;
+                calibrated.ingestBytes(QByteArrayView("VISION SCALE material forward_milli=500 right_milli=1000\r\n"));
+                if (!require(commands.back() == "arm\r\n", "calibrated material scale did not advance mission")) return 1;
+            }
+            calibrated.setConnected(false);
+            calibrated.setConnected(true);
+        }
+    }
     return 0;
 }
