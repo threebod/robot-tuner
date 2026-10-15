@@ -66,8 +66,8 @@ int main(void)
             assert(memcmp(&saved, &task, sizeof(task)) == 0);
             missionBuildTaskPlace(actions, rings, 2U, 0U);
             for (item = 0; item < 3; ++item) {
-                unsigned platform = item == 0 ? 0 : item == 1 ? 10 : 20;
-                unsigned release = item == 0 ? 8 : item == 1 ? 17 : 29;
+                unsigned platform = item == 0 ? 0 : item == 1 ? 10 : 18;
+                unsigned release = item == 0 ? 8 : item == 1 ? 16 : 26;
                 unsigned first = permutations[pickup][item] - 1;
                 assert(actions[platform].value == item + 1);
                 assert(task.colors[1][item] == task.colors[0][first]);
@@ -81,8 +81,8 @@ int main(void)
             uint16_t count = coarse ? MISSION_COARSE_PLACE_COUNT : MISSION_PLACE_COUNT;
             missionBuildTaskPlace(actions, rings, (uint8_t)layer, (uint8_t)coarse);
             for (item = 0; item < 3; ++item) {
-                unsigned platform = item == 0 ? 0 : item == 1 ? 10 : 20;
-                unsigned releasePose = item == 0 ? 8 : item == 1 ? 17 : 29;
+                unsigned platform = item == 0 ? 0 : item == 1 ? 10 : 18;
+                unsigned releasePose = item == 0 ? 8 : item == 1 ? 16 : 26;
                 unsigned ring = rings[item] - 1;
                 assert(actions[platform].type == MECHANISM_ACTION_PLATFORM);
                 assert(actions[platform].value == item + 1);
@@ -91,19 +91,27 @@ int main(void)
                 assert(actions[releasePose].pose.liftDmm == (layer == 2 ? 650 : 1300));
                 assert(actions[releasePose + 1].type == MECHANISM_ACTION_GRIPPER);
                 assert(actions[releasePose + 1].value == 1);
+                if (item < 2 || !coarse) {
+                    unsigned retract = releasePose + (item < 2 ? 3 : 2);
+                    assert(actions[retract].type == MECHANISM_ACTION_POSE);
+                    assert(actions[retract].pose.liftDmm == 0);
+                    assert(actions[retract].pose.horizontalDmm == (item < 2 ? -500 : 0));
+                    assert(actions[retract].pose.turretDdeg == (item < 2 ? 1320 : 2720));
+                }
             }
             for (i = 0; i < count; ++i)
                 if (actions[i].type == MECHANISM_ACTION_POSE)
                     assert(mechanismPoseValid(&actions[i].pose));
-            assert(actions[21].pose.horizontalDmm == horizontal[rings[1] - 1]);
+            assert(actions[24].pose.turretDdeg == angles[rings[2] - 1]);
         }
-        missionBuildTaskPickBack(pick, rings, rings[2], -500);
-        missionBuildTaskPickBack(secondPick, rings, rings[2], -450);
-        /* Raise at the last release before moving to the first task item. */
+        missionBuildTaskPickBack(pick, rings, -500);
+        missionBuildTaskPickBack(secondPick, rings, -450);
+        /* Lift and return to the tray in the same pose after the last release. */
         assert(pick[0].type == MECHANISM_ACTION_POSE);
-        assert(pick[0].pose.horizontalDmm == horizontal[rings[2] - 1]);
-        assert(pick[0].pose.turretDdeg == angles[rings[2] - 1]);
+        assert(pick[0].pose.horizontalDmm == -500);
+        assert(pick[0].pose.turretDdeg == 1320);
         assert(pick[0].pose.liftDmm == 0);
+        assert(secondPick[0].pose.horizontalDmm == -450);
         for (item = 0; item < 3; ++item) {
             unsigned base = 1 + item * 11;
             unsigned retract = base + 7;
@@ -128,14 +136,17 @@ int main(void)
             assert(secondPick[retract + 1].pose.liftDmm == 300);
             assert(secondPick[retract + 2].type == MECHANISM_ACTION_GRIPPER &&
                    secondPick[retract + 2].value == 1);
-            assert(secondPick[retract + 3].pose.horizontalDmm == -450);
+            if (item < 2) assert(secondPick[retract + 3].pose.horizontalDmm == -450);
         }
         assert(pick[MISSION_PICK_BACK_COUNT - 1].type == MECHANISM_ACTION_GRIPPER);
-        assert(pick[MISSION_PICK_BACK_COUNT - 2].pose.turretDdeg == 650);
+        assert(pick[MISSION_PICK_BACK_COUNT - 1].value == 1);
+        assert(pick[MISSION_PICK_BACK_COUNT - 2].pose.horizontalDmm == -500);
+        assert(pick[MISSION_PICK_BACK_COUNT - 2].pose.liftDmm == 300);
+        assert(pick[MISSION_PICK_BACK_COUNT - 2].pose.turretDdeg == 1320);
         for (i = 0; i < MISSION_PICK_BACK_COUNT; ++i)
             if (pick[i].type == MECHANISM_ACTION_POSE)
                 assert(mechanismPoseValid(&pick[i].pose));
     }
-    puts("PASS: task-order placement and recovery for all 6 permutations, raised recovery entry, 4320 same-color stacking combinations, tray offsets");
+    puts("PASS: task-order placement/recovery, simultaneous lift/retract, final tray release, 4320 same-color stacking combinations, tray offsets");
     return 0;
 }
